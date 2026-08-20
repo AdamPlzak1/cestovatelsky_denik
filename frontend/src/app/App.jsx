@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
   Plus, ChevronLeft, Camera, X, Play, Pause, MapPin,
-  SkipBack, SkipForward, Music, Trash2, Calendar, Search, Loader2
+  SkipBack, SkipForward, Music, Trash2, Calendar, Search, Loader2, Route as RouteIcon,
+  Plane, Car, Bike, Footprints, Ship
 } from "lucide-react";
 
 // ---------------------------------------------------------------------
@@ -100,6 +101,16 @@ function compressImage(file, maxDim = 1000, quality = 0.72) {
   });
 }
 
+const TRANSPORT_ICONS = { plane: Plane, car: Car, bike: Bike, walk: Footprints, boat: Ship };
+const TRANSPORT_EMOJI = { plane: "✈️", car: "🚗", bike: "🚲", walk: "🚶", boat: "⛵" };
+const TRANSPORT_OPTIONS = [
+  { value: "car", label: "Auto" },
+  { value: "plane", label: "Letadlo" },
+  { value: "bike", label: "Kolo" },
+  { value: "walk", label: "Pěšky" },
+  { value: "boat", label: "Loď" },
+];
+
 // -------------------- Stamp badge (signature element) ------------------
 
 function StampBadge({ label, color = PALETTE.coral, size = 64 }) {
@@ -118,15 +129,16 @@ function StampBadge({ label, color = PALETTE.coral, size = 64 }) {
   );
 }
 
-function StopBadge({ index, total, size = 24 }) {
+function StopBadge({ index, total, size = 24, kind = "stop", transport }) {
   const color = index === 0 ? PALETTE.teal : index === total - 1 ? PALETTE.coral : PALETTE.gold;
+  const TransportIcon = kind === "route" ? (TRANSPORT_ICONS[transport] || RouteIcon) : null;
   return (
     <div style={{
       width: size, height: size, borderRadius: "50%", background: color, color: "#fff",
       display: "flex", alignItems: "center", justifyContent: "center",
       fontSize: size * 0.46, fontWeight: 700, flexShrink: 0,
     }}>
-      {index + 1}
+      {kind === "route" ? <TransportIcon size={size * 0.55} /> : index + 1}
     </div>
   );
 }
@@ -162,13 +174,28 @@ async function geocodePlace(query) {
   return res.json();
 }
 
+// Rozbalí položky dne (zastávka = 1 bod, cesta = 2 body odkud/kam) na
+// plochý seznam geografických bodů pro vykreslení na mapě.
+function flattenToGeoDots(points) {
+  const dots = [];
+  points.forEach((p) => {
+    if (p.kind === "route" && p.toLat != null && p.toLng != null) {
+      dots.push({ id: `${p.id}:from`, ownerId: p.id, lat: p.lat, lng: p.lng, label: p.label });
+      dots.push({ id: `${p.id}:to`, ownerId: p.id, lat: p.toLat, lng: p.toLng, label: p.toLabel });
+    } else {
+      dots.push({ id: p.id, ownerId: p.id, lat: p.lat, lng: p.lng, label: p.label });
+    }
+  });
+  return dots;
+}
+
 /**
- * points: [{ id, lat, lng, label }]
+ * points: [{ id, kind: 'stop'|'route', lat, lng, label, toLat?, toLng?, toLabel? }]
  * onAddPoint({lat,lng,label}): voláno při klepnutí na mapu nebo výběru z vyhledávání
- * focusPointId: zúží a vycentruje mapu na daný bod, ostatní ztlumí
+ * focusItemId: zúží a vycentruje mapu na danou položku (u cesty na oba její body), ostatní ztlumí
  * showLabelsAlways: trvalé popisky u všech pojmenovaných bodů
  */
-function RouteMap({ points, onAddPoint, editable, height = 220, focusPointId = null, showLabelsAlways = false }) {
+function RouteMap({ points, onAddPoint, editable, height = 220, focusItemId = null, showLabelsAlways = false }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const layerRef = useRef(null);
@@ -181,18 +208,20 @@ function RouteMap({ points, onAddPoint, editable, height = 220, focusPointId = n
   const onAddPointRef = useRef(onAddPoint);
   onAddPointRef.current = onAddPoint;
 
+  const geoDots = flattenToGeoDots(points);
+
   useEffect(() => {
     let cancelled = false;
     loadLeaflet()
       .then((L) => {
         if (cancelled || !containerRef.current || mapRef.current) return;
-        const start = points[0] ? [points[0].lat, points[0].lng] : [49.82, 15.47];
+        const start = geoDots[0] ? [geoDots[0].lat, geoDots[0].lng] : [49.82, 15.47];
         const map = L.map(containerRef.current, {
           zoomControl: editable,
           scrollWheelZoom: editable,
           dragging: true,
           tap: true,
-        }).setView(start, points.length ? 12 : 7);
+        }).setView(start, geoDots.length ? 12 : 7);
 
         L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
           maxZoom: 19,
@@ -227,18 +256,18 @@ function RouteMap({ points, onAddPoint, editable, height = 220, focusPointId = n
     const L = window.L;
     layerRef.current.clearLayers();
 
-    if (points.length > 0) {
-      if (points.length > 1) {
-        const latlngs = points.map((p) => [p.lat, p.lng]);
+    if (geoDots.length > 0) {
+      if (geoDots.length > 1) {
+        const latlngs = geoDots.map((d) => [d.lat, d.lng]);
         L.polyline(latlngs, { color: PALETTE.coral, weight: 3, dashArray: "1 8", lineCap: "round" }).addTo(layerRef.current);
       }
 
-      points.forEach((p, i) => {
-        const isFocused = focusPointId === p.id;
-        const isDimmed = focusPointId && !isFocused;
-        const baseColor = i === 0 ? PALETTE.teal : i === points.length - 1 ? PALETTE.coral : PALETTE.gold;
+      geoDots.forEach((d, i) => {
+        const isFocused = focusItemId === d.ownerId;
+        const isDimmed = focusItemId && !isFocused;
+        const baseColor = i === 0 ? PALETTE.teal : i === geoDots.length - 1 ? PALETTE.coral : PALETTE.gold;
 
-        const marker = L.circleMarker([p.lat, p.lng], {
+        const marker = L.circleMarker([d.lat, d.lng], {
           radius: isFocused ? 10 : isDimmed ? 4 : 6,
           weight: isFocused ? 3 : 2,
           color: "#fff",
@@ -246,22 +275,43 @@ function RouteMap({ points, onAddPoint, editable, height = 220, focusPointId = n
           fillOpacity: isDimmed ? 0.35 : 1,
         }).addTo(layerRef.current);
 
-        if (p.label && (isFocused || showLabelsAlways)) {
-          marker.bindTooltip(p.label, { permanent: true, direction: "top", offset: [0, -6], className: "cd-map-label" });
+        if (d.label && (isFocused || showLabelsAlways)) {
+          marker.bindTooltip(d.label, { permanent: true, direction: "top", offset: [0, -6], className: "cd-map-label" });
         }
       });
 
-      if (focusPointId) {
-        const p = points.find((pt) => pt.id === focusPointId);
-        if (p) mapRef.current.setView([p.lat, p.lng], 15);
-      } else if (points.length > 1) {
-        mapRef.current.fitBounds(points.map((p) => [p.lat, p.lng]), { padding: [30, 30] });
+      // Piktogram dopravního prostředku uprostřed každé cesty (odkud → kam).
+      points.forEach((p) => {
+        if (p.kind !== "route" || p.toLat == null || p.toLng == null) return;
+        const isFocused = focusItemId === p.id;
+        const isDimmed = focusItemId && !isFocused;
+        const midLat = (p.lat + p.toLat) / 2;
+        const midLng = (p.lng + p.toLng) / 2;
+        const emoji = TRANSPORT_EMOJI[p.transport] || TRANSPORT_EMOJI.car;
+        const icon = L.divIcon({
+          className: "",
+          html: `<div style="width:28px;height:28px;border-radius:50%;background:${isDimmed ? "rgba(217,98,43,0.4)" : "#fff"};display:flex;align-items:center;justify-content:center;font-size:15px;box-shadow:0 0 0 2px ${isDimmed ? "rgba(217,98,43,0.4)" : PALETTE.coral};">${emoji}</div>`,
+          iconSize: [28, 28],
+          iconAnchor: [14, 14],
+        });
+        L.marker([midLat, midLng], { icon, interactive: false }).addTo(layerRef.current);
+      });
+
+      if (focusItemId) {
+        const focusedDots = geoDots.filter((d) => d.ownerId === focusItemId);
+        if (focusedDots.length > 1) {
+          mapRef.current.fitBounds(focusedDots.map((d) => [d.lat, d.lng]), { padding: [40, 40] });
+        } else if (focusedDots.length === 1) {
+          mapRef.current.setView([focusedDots[0].lat, focusedDots[0].lng], 15);
+        }
+      } else if (geoDots.length > 1) {
+        mapRef.current.fitBounds(geoDots.map((d) => [d.lat, d.lng]), { padding: [30, 30] });
       } else {
-        mapRef.current.setView([points[0].lat, points[0].lng], 13);
+        mapRef.current.setView([geoDots[0].lat, geoDots[0].lng], 13);
       }
       setTimeout(() => mapRef.current && mapRef.current.invalidateSize(), 100);
     }
-  }, [points, ready, focusPointId, showLabelsAlways]);
+  }, [points, ready, focusItemId, showLabelsAlways]);
 
   const runSearch = async (e) => {
     e.preventDefault();
@@ -494,7 +544,7 @@ function TripDetailScreen({ trip, photoCounts, onBack, onAddDay, onOpenDay, onSt
 
 // -------------------- Day detail screen -----------------------------------
 
-function PhotoStrip({ photos, onOpen, onAdd, uploading }) {
+function PhotoStrip({ photos, pendingCount = 0, onOpen, onAdd }) {
   return (
     <div style={{ display: "flex", gap: 7, overflowX: "auto", paddingBottom: 2 }}>
       {photos.map((photo) => (
@@ -506,9 +556,16 @@ function PhotoStrip({ photos, onOpen, onAdd, uploading }) {
           <img src={photo.src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
         </div>
       ))}
+      {Array.from({ length: pendingCount }).map((_, i) => (
+        <div
+          key={`pending-${i}`}
+          style={{ flex: "0 0 auto", width: 62, height: 62, borderRadius: 9, border: `1px solid ${PALETTE.paperDeep}`, background: PALETTE.paperDeep, display: "flex", alignItems: "center", justifyContent: "center" }}
+        >
+          <Loader2 size={18} className="cd-spin" color={PALETTE.teal} />
+        </div>
+      ))}
       <button
         onClick={onAdd}
-        disabled={uploading}
         style={{ flex: "0 0 auto", width: 62, height: 62, borderRadius: 9, border: `1.5px dashed ${PALETTE.gold}`, background: "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: PALETTE.gold }}
       >
         <Camera size={17} />
@@ -517,43 +574,106 @@ function PhotoStrip({ photos, onOpen, onAdd, uploading }) {
   );
 }
 
-function PointRow({ point, index, total, photos, onRename, onRemove, onOpenPhoto, onAddPhoto, uploading }) {
-  const [label, setLabel] = useState(point.label);
+function ItemRow({ item, index, total, photos, pendingCount, onRenameFrom, onRenameTo, onRenameNote, onSetTransport, onRemove, onOpenPhoto, onAddPhoto }) {
+  const [fromLabel, setFromLabel] = useState(item.label);
+  const [toLabel, setToLabel] = useState(item.toLabel || "");
+  const [note, setNote] = useState(item.note || "");
 
   useEffect(() => {
-    const t = setTimeout(() => { if (label !== point.label) onRename(point.id, label); }, 500);
+    const t = setTimeout(() => { if (fromLabel !== item.label) onRenameFrom(item.id, fromLabel); }, 500);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [label]);
+  }, [fromLabel]);
+
+  useEffect(() => {
+    if (item.kind !== "route") return;
+    const t = setTimeout(() => { if (toLabel !== (item.toLabel || "")) onRenameTo(item.id, toLabel); }, 500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [toLabel]);
+
+  useEffect(() => {
+    const t = setTimeout(() => { if (note !== (item.note || "")) onRenameNote(item.id, note); }, 500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [note]);
 
   return (
     <div style={{ background: PALETTE.cream, border: `1px solid ${PALETTE.paperDeep}`, borderRadius: 12, padding: 10 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <StopBadge index={index} total={total} />
-        <input
-          value={label}
-          onChange={(e) => setLabel(e.target.value)}
-          placeholder={`Zastávka ${index + 1}`}
-          style={{ ...inputStyle, flex: 1, background: "#fff" }}
-        />
-        <button onClick={() => onRemove(point.id)} style={{ background: "none", border: "none", color: PALETTE.ink, opacity: 0.4, cursor: "pointer", padding: 4 }}>
+        <StopBadge index={index} total={total} kind={item.kind} transport={item.transport} />
+        {item.kind === "route" ? (
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
+            <input
+              value={fromLabel}
+              onChange={(e) => setFromLabel(e.target.value)}
+              placeholder="Odkud"
+              style={{ ...inputStyle, background: "#fff" }}
+            />
+            <input
+              value={toLabel}
+              onChange={(e) => setToLabel(e.target.value)}
+              placeholder="Kam"
+              style={{ ...inputStyle, background: "#fff" }}
+            />
+            <div style={{ display: "flex", gap: 6 }}>
+              {TRANSPORT_OPTIONS.map((opt) => {
+                const Icon = TRANSPORT_ICONS[opt.value];
+                const active = (item.transport || "car") === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    onClick={() => onSetTransport(item.id, opt.value)}
+                    title={opt.label}
+                    style={{
+                      flex: 1, padding: "7px 0", borderRadius: 8, cursor: "pointer",
+                      border: `1.5px solid ${active ? PALETTE.coral : PALETTE.paperDeep}`,
+                      background: active ? PALETTE.coral : "#fff",
+                      color: active ? "#fff" : PALETTE.ink,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                    }}
+                  >
+                    <Icon size={15} />
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <input
+            value={fromLabel}
+            onChange={(e) => setFromLabel(e.target.value)}
+            placeholder={`Zastávka ${index + 1}`}
+            style={{ ...inputStyle, flex: 1, background: "#fff" }}
+          />
+        )}
+        <button onClick={() => onRemove(item.id)} style={{ background: "none", border: "none", color: PALETTE.ink, opacity: 0.4, cursor: "pointer", padding: 4, alignSelf: item.kind === "route" ? "flex-start" : "center" }}>
           <X size={16} />
         </button>
       </div>
+      <textarea
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        placeholder="Poznámka (zobrazí se i v prezentaci)"
+        rows={2}
+        style={{ ...inputStyle, width: "100%", marginTop: 8, background: "#fff", resize: "vertical", fontFamily: "inherit" }}
+      />
       <div style={{ marginTop: 8 }}>
-        <PhotoStrip photos={photos} onOpen={onOpenPhoto} onAdd={() => onAddPhoto(point.id)} uploading={uploading} />
+        <PhotoStrip photos={photos} pendingCount={pendingCount} onOpen={onOpenPhoto} onAdd={() => onAddPhoto(item.id)} />
       </div>
     </div>
   );
 }
 
-function DayDetailScreen({ day, photos, onBack, onUpdateDay, onAddPoint, onRenamePoint, onRemovePoint, onAddPhotos, onRemovePhoto }) {
+function DayDetailScreen({ day, photos, onBack, onUpdateDay, onAddItem, onRenameItem, onRemoveItem, onAddPhoto, onRemovePhoto }) {
   const fileInputRef = useRef(null);
   const uploadTargetRef = useRef(null);
   const [title, setTitle] = useState(day.title || "");
   const [date, setDate] = useState(day.date || todayISO());
-  const [uploading, setUploading] = useState(false);
+  const [pendingUploads, setPendingUploads] = useState([]); // [{ tempId, pointId }]
   const [viewerPhoto, setViewerPhoto] = useState(null);
+  const [mode, setMode] = useState("stop"); // "stop" | "route"
+  const [routeDraft, setRouteDraft] = useState(null); // { lat, lng, label } — první vybraný bod cesty
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -568,29 +688,69 @@ function DayDetailScreen({ day, photos, onBack, onUpdateDay, onAddPoint, onRenam
     fileInputRef.current?.click();
   };
 
-  const handleFiles = async (e) => {
+  // Klepnutí na mapu nebo výběr z vyhledávání — v režimu "zastávka" rovnou
+  // vytvoří bod, v režimu "cesta" nejdřív zachytí "odkud" a napodruhé "kam".
+  const handleRawPoint = (point) => {
+    if (mode === "stop") {
+      onAddItem({ kind: "stop", lat: point.lat, lng: point.lng, label: point.label || "" });
+    } else if (!routeDraft) {
+      setRouteDraft(point);
+    } else {
+      onAddItem({
+        kind: "route",
+        lat: routeDraft.lat, lng: routeDraft.lng, label: routeDraft.label || "",
+        toLat: point.lat, toLng: point.lng, toLabel: point.label || "",
+        transport: "car",
+      });
+      setRouteDraft(null);
+    }
+  };
+
+  const switchMode = (next) => {
+    setMode(next);
+    setRouteDraft(null);
+  };
+
+  // Každá fotka se zpracuje a nahraje samostatně, na pozadí, bez blokování
+  // ostatních akcí — u nahrávané fotky se mezitím zobrazí zástupné kolečko.
+  const handleFiles = (e) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
-    setUploading(true);
-    const compressed = [];
-    for (const f of files) {
-      try {
-        compressed.push(await compressImage(f));
-      } catch {
-        // přeskoč soubor, který se nepodařilo zpracovat
-      }
-    }
-    await onAddPhotos(compressed, uploadTargetRef.current);
-    setUploading(false);
+    const pointId = uploadTargetRef.current;
+    const entries = files.map((file) => ({ tempId: uid(), pointId, file }));
+    setPendingUploads((prev) => [...prev, ...entries.map(({ tempId, pointId }) => ({ tempId, pointId }))]);
     e.target.value = "";
+
+    entries.forEach(async ({ tempId, pointId, file }) => {
+      try {
+        const src = await compressImage(file);
+        await onAddPhoto(src, pointId);
+      } catch {
+        // přeskoč soubor, který se nepodařilo zpracovat nebo nahrát
+      } finally {
+        setPendingUploads((prev) => prev.filter((p) => p.tempId !== tempId));
+      }
+    });
   };
 
   const points = day.points || [];
   const unassigned = photos.filter((p) => !p.pointId);
+  const unassignedPending = pendingUploads.filter((p) => !p.pointId).length;
 
   return (
     <div style={{ padding: "16px 18px 90px" }}>
       <TopBar onBack={onBack} title="Den cesty" />
+
+      {pendingUploads.length > 0 && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 8, background: PALETTE.cream,
+          border: `1px solid ${PALETTE.paperDeep}`, borderRadius: 10, padding: "8px 12px",
+          marginTop: 14, fontSize: 12.5, color: PALETTE.teal,
+        }}>
+          <Loader2 size={14} className="cd-spin" />
+          Nahrávám {pendingUploads.length} {pendingUploads.length === 1 ? "fotku" : pendingUploads.length < 5 ? "fotky" : "fotek"}…
+        </div>
+      )}
 
       <div style={{ margin: "16px 0 10px" }}>
         <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Název dne, např. Lisabon → Sintra" style={{ ...inputStyle, width: "100%" }} />
@@ -601,33 +761,77 @@ function DayDetailScreen({ day, photos, onBack, onUpdateDay, onAddPoint, onRenam
       </div>
 
       <SectionLabel>Mapa dne</SectionLabel>
-      <RouteMap points={points} onAddPoint={(p) => onAddPoint(p)} editable height={200} />
 
-      <SectionLabel style={{ marginTop: 20 }}>Zastávky {points.length > 0 ? `(${points.length})` : ""}</SectionLabel>
+      <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+        <button
+          onClick={() => switchMode("stop")}
+          style={{
+            flex: 1, padding: "9px 0", borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: "pointer",
+            border: `1.5px solid ${mode === "stop" ? PALETTE.teal : PALETTE.paperDeep}`,
+            background: mode === "stop" ? PALETTE.teal : "transparent",
+            color: mode === "stop" ? "#fff" : PALETTE.ink,
+          }}
+        >
+          <MapPin size={14} style={{ verticalAlign: -2, marginRight: 5 }} /> Zastávka
+        </button>
+        <button
+          onClick={() => switchMode("route")}
+          style={{
+            flex: 1, padding: "9px 0", borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: "pointer",
+            border: `1.5px solid ${mode === "route" ? PALETTE.teal : PALETTE.paperDeep}`,
+            background: mode === "route" ? PALETTE.teal : "transparent",
+            color: mode === "route" ? "#fff" : PALETTE.ink,
+          }}
+        >
+          <RouteIcon size={14} style={{ verticalAlign: -2, marginRight: 5 }} /> Cesta
+        </button>
+      </div>
+
+      {mode === "route" && (
+        <div style={{ fontSize: 12, color: PALETTE.teal, marginBottom: 8, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <span>
+            {routeDraft
+              ? `Odkud: ${routeDraft.label || "vybráno"} — teď vyber kam cesta vede`
+              : "Vyber, odkud cesta začíná (klepni na mapu nebo vyhledej)"}
+          </span>
+          {routeDraft && (
+            <button onClick={() => setRouteDraft(null)} style={{ background: "none", border: "none", color: PALETTE.coral, fontSize: 12, cursor: "pointer", fontWeight: 600 }}>
+              Zrušit
+            </button>
+          )}
+        </div>
+      )}
+
+      <RouteMap points={points} onAddPoint={handleRawPoint} editable height={200} />
+
+      <SectionLabel style={{ marginTop: 20 }}>Zastávky a cesty {points.length > 0 ? `(${points.length})` : ""}</SectionLabel>
 
       {points.length === 0 ? (
-        <EmptyHint text="Zatím žádná zastávka — klepni na mapu nebo místo vyhledej." />
+        <EmptyHint text="Zatím žádná zastávka ani cesta — klepni na mapu nebo místo vyhledej." />
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {points.map((point, i) => (
-            <PointRow
+            <ItemRow
               key={point.id}
-              point={point}
+              item={point}
               index={i}
               total={points.length}
               photos={photos.filter((p) => p.pointId === point.id)}
-              onRename={onRenamePoint}
-              onRemove={onRemovePoint}
+              pendingCount={pendingUploads.filter((p) => p.pointId === point.id).length}
+              onRenameFrom={(id, label) => onRenameItem(id, { label })}
+              onRenameTo={(id, toLabel) => onRenameItem(id, { toLabel })}
+              onRenameNote={(id, note) => onRenameItem(id, { note })}
+              onSetTransport={(id, transport) => onRenameItem(id, { transport })}
+              onRemove={onRemoveItem}
               onOpenPhoto={setViewerPhoto}
               onAddPhoto={openFilePicker}
-              uploading={uploading}
             />
           ))}
         </div>
       )}
 
       <SectionLabel style={{ marginTop: 20 }}>Ostatní fotky dne</SectionLabel>
-      <PhotoStrip photos={unassigned} onOpen={setViewerPhoto} onAdd={() => openFilePicker(null)} uploading={uploading} />
+      <PhotoStrip photos={unassigned} pendingCount={unassignedPending} onOpen={setViewerPhoto} onAdd={() => openFilePicker(null)} />
 
       <input ref={fileInputRef} type="file" accept="image/*" multiple onChange={handleFiles} style={{ display: "none" }} />
 
@@ -759,16 +963,27 @@ function PresentationScreen({ trip, allPhotos, onExit }) {
           <>
             <div style={{ fontSize: 11.5, opacity: 0.55, marginBottom: 2 }}>{day.title || `Den ${dayIndex + 1}`} · {formatDateCz(day.date)}</div>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
-              <MapPin size={20} color={PALETTE.coral} />
-              <div style={{ fontFamily: "'Fraunces', serif", fontSize: 24, fontWeight: 600 }}>{point.label || `Zastávka ${day.points.indexOf(point) + 1}`}</div>
+              {point.kind === "route" ? React.createElement(TRANSPORT_ICONS[point.transport] || RouteIcon, { size: 20, color: PALETTE.coral }) : <MapPin size={20} color={PALETTE.coral} />}
+              <div style={{ fontFamily: "'Fraunces', serif", fontSize: 22, fontWeight: 600 }}>
+                {point.kind === "route"
+                  ? `${point.label || "Odkud"} → ${point.toLabel || "Kam"}`
+                  : (point.label || `Zastávka ${day.points.indexOf(point) + 1}`)}
+              </div>
             </div>
-            <div style={{ flex: 1, minHeight: 0 }}><RouteMap points={day.points} editable={false} height="100%" focusPointId={point.id} /></div>
+            {point.note && (
+              <div style={{ fontSize: 13.5, opacity: 0.8, lineHeight: 1.5, marginBottom: 14, whiteSpace: "pre-wrap" }}>
+                {point.note}
+              </div>
+            )}
+            <div style={{ flex: 1, minHeight: 0 }}><RouteMap points={day.points} editable={false} height="100%" focusItemId={point.id} /></div>
           </>
         )}
         {slide.kind === "photo" && photo && (
           <>
             <div style={{ fontSize: 13, opacity: 0.75, marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
-              {point ? <><MapPin size={13} color={PALETTE.coral} /> {point.label || "Zastávka"}</> : (day.title || `Den ${dayIndex + 1}`)}
+              {point
+                ? <>{point.kind === "route" ? <RouteIcon size={13} color={PALETTE.coral} /> : <MapPin size={13} color={PALETTE.coral} />} {point.kind === "route" ? `${point.label || "Odkud"} → ${point.toLabel || "Kam"}` : (point.label || "Zastávka")}</>
+                : (day.title || `Den ${dayIndex + 1}`)}
             </div>
             <div style={{ flex: 1, borderRadius: 14, overflow: "hidden", background: "#000" }}>
               <img src={photo.src} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
@@ -850,7 +1065,11 @@ export default function CestovatelskyDenik() {
               date: d.date || "",
               points: pointsRows
                 .filter((p) => p.day_id === d.id)
-                .map((p) => ({ id: p.id, lat: p.lat, lng: p.lng, label: p.label || "" })),
+                .map((p) => ({
+                  id: p.id, lat: p.lat, lng: p.lng, label: p.label || "",
+                  kind: p.kind || "stop", note: p.note || "", transport: p.transport || null,
+                  toLat: p.to_lat ?? null, toLng: p.to_lng ?? null, toLabel: p.to_label || "",
+                })),
             })),
         }));
         const photosMap = {};
@@ -917,28 +1136,41 @@ export default function CestovatelskyDenik() {
     withSave(() => sb(`days?id=eq.${dayId}`, { method: "PATCH", body: JSON.stringify(patch) }));
   };
 
-  const addPoint = (tripId, dayId, { lat, lng, label }) => {
+  const addItem = (tripId, dayId, { kind, lat, lng, label, toLat, toLng, toLabel, transport }) => {
     const id = uid();
     let position = 0;
+    const item = { id, kind: kind || "stop", lat, lng, label: label || "", toLat: toLat ?? null, toLng: toLng ?? null, toLabel: toLabel || "", transport: transport || (kind === "route" ? "car" : null) };
     setTrips((prev) => prev.map((t) => {
       if (t.id !== tripId) return t;
       return { ...t, days: t.days.map((d) => {
         if (d.id !== dayId) return d;
         position = d.points.length;
-        return { ...d, points: [...d.points, { id, lat, lng, label: label || "" }] };
+        return { ...d, points: [...d.points, item] };
       }) };
     }));
-    withSave(() => sb("points", { method: "POST", body: JSON.stringify({ id, day_id: dayId, lat, lng, label: label || "", position }) }));
-  };
-
-  const renamePoint = (tripId, dayId, pointId, label) => {
-    setTrips((prev) => prev.map((t) => t.id !== tripId ? t : {
-      ...t, days: t.days.map((d) => d.id !== dayId ? d : { ...d, points: d.points.map((p) => p.id === pointId ? { ...p, label } : p) }),
+    withSave(() => sb("points", {
+      method: "POST",
+      body: JSON.stringify({
+        id, day_id: dayId, lat, lng, label: label || "", kind: kind || "stop", position,
+        to_lat: toLat ?? null, to_lng: toLng ?? null, to_label: toLabel || null,
+        transport: item.transport,
+      }),
     }));
-    withSave(() => sb(`points?id=eq.${pointId}`, { method: "PATCH", body: JSON.stringify({ label }) }));
   };
 
-  const removePoint = (tripId, dayId, pointId) => {
+  const renameItem = (tripId, dayId, pointId, patch) => {
+    setTrips((prev) => prev.map((t) => t.id !== tripId ? t : {
+      ...t, days: t.days.map((d) => d.id !== dayId ? d : { ...d, points: d.points.map((p) => p.id === pointId ? { ...p, ...patch } : p) }),
+    }));
+    const dbPatch = {};
+    if ("label" in patch) dbPatch.label = patch.label;
+    if ("toLabel" in patch) dbPatch.to_label = patch.toLabel;
+    if ("note" in patch) dbPatch.note = patch.note;
+    if ("transport" in patch) dbPatch.transport = patch.transport;
+    withSave(() => sb(`points?id=eq.${pointId}`, { method: "PATCH", body: JSON.stringify(dbPatch) }));
+  };
+
+  const removeItem = (tripId, dayId, pointId) => {
     setTrips((prev) => prev.map((t) => t.id !== tripId ? t : {
       ...t, days: t.days.map((d) => d.id !== dayId ? d : { ...d, points: d.points.filter((p) => p.id !== pointId) }),
     }));
@@ -949,12 +1181,12 @@ export default function CestovatelskyDenik() {
     withSave(() => sb(`points?id=eq.${pointId}`, { method: "DELETE", prefer: "return=minimal" }));
   };
 
-  const addPhotosToDay = async (tripId, dayId, srcs, pointId) => {
-    const newPhotos = srcs.map((src) => ({ id: uid(), src, pointId: pointId || null }));
-    setDayPhotos((prev) => ({ ...prev, [dayId]: [...(prev[dayId] || []), ...newPhotos] }));
+  const addPhotoToDay = async (tripId, dayId, src, pointId) => {
+    const photo = { id: uid(), src, pointId: pointId || null };
+    setDayPhotos((prev) => ({ ...prev, [dayId]: [...(prev[dayId] || []), photo] }));
     await withSave(() => sb("photos", {
       method: "POST",
-      body: JSON.stringify(newPhotos.map((p) => ({ id: p.id, day_id: dayId, point_id: p.pointId, src: p.src }))),
+      body: JSON.stringify([{ id: photo.id, day_id: dayId, point_id: photo.pointId, src: photo.src }]),
     }));
   };
 
@@ -1006,10 +1238,10 @@ export default function CestovatelskyDenik() {
           photos={dayPhotos[currentDay.id] || []}
           onBack={() => setView({ screen: "trip", tripId: currentTrip.id })}
           onUpdateDay={(patch) => updateDay(currentTrip.id, currentDay.id, patch)}
-          onAddPoint={(p) => addPoint(currentTrip.id, currentDay.id, p)}
-          onRenamePoint={(pointId, label) => renamePoint(currentTrip.id, currentDay.id, pointId, label)}
-          onRemovePoint={(pointId) => removePoint(currentTrip.id, currentDay.id, pointId)}
-          onAddPhotos={(srcs, pointId) => addPhotosToDay(currentTrip.id, currentDay.id, srcs, pointId)}
+          onAddItem={(item) => addItem(currentTrip.id, currentDay.id, item)}
+          onRenameItem={(pointId, patch) => renameItem(currentTrip.id, currentDay.id, pointId, patch)}
+          onRemoveItem={(pointId) => removeItem(currentTrip.id, currentDay.id, pointId)}
+          onAddPhoto={(src, pointId) => addPhotoToDay(currentTrip.id, currentDay.id, src, pointId)}
           onRemovePhoto={(photoId) => removePhotoFromDay(currentTrip.id, currentDay.id, photoId)}
         />
       ) : view.screen === "presentation" && currentTrip ? (
