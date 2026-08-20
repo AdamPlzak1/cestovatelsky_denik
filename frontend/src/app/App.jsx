@@ -477,7 +477,7 @@ function TripListScreen({ trips, onOpenTrip, onCreateTrip, dbStatus, dbError, la
 
 // -------------------- Trip detail screen (list of days) ------------------
 
-function TripDetailScreen({ trip, photoCounts, onBack, onAddDay, onOpenDay, onStartPresentation, onOpenRestaurants, onOpenHighlights, onOpenFavorites, onDeleteTrip }) {
+function TripDetailScreen({ trip, photoCounts, onBack, onAddDay, onOpenDay, onStartPresentation, onPlayDay, onOpenRestaurants, onOpenHighlights, onOpenFavorites, onDeleteTrip }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   return (
@@ -490,7 +490,7 @@ function TripDetailScreen({ trip, photoCounts, onBack, onAddDay, onOpenDay, onSt
         </button>
         {trip.days.length > 0 && (
           <button onClick={onStartPresentation} style={{ ...btnAccent, flex: 1 }}>
-            <Play size={15} style={{ marginRight: 6, verticalAlign: -2 }} fill={PALETTE.cream} /> Prezentace
+            <Play size={15} style={{ marginRight: 6, verticalAlign: -2 }} fill={PALETTE.cream} /> Celková prezentace
           </button>
         )}
       </div>
@@ -514,22 +514,35 @@ function TripDetailScreen({ trip, photoCounts, onBack, onAddDay, onOpenDay, onSt
           <div style={{ position: "absolute", left: 6, top: 6, bottom: 6, width: 2, background: `repeating-linear-gradient(to bottom, ${PALETTE.gold} 0 6px, transparent 6px 11px)` }} />
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             {trip.days.map((day, i) => (
-              <button
+              <div
                 key={day.id}
-                onClick={() => onOpenDay(day.id)}
-                style={{ position: "relative", textAlign: "left", background: PALETTE.cream, border: `1px solid ${PALETTE.paperDeep}`, borderRadius: 14, padding: "12px 14px", cursor: "pointer" }}
+                style={{ position: "relative", background: PALETTE.cream, border: `1px solid ${PALETTE.paperDeep}`, borderRadius: 14, padding: "12px 14px" }}
               >
                 <div style={{ position: "absolute", left: -22, top: 18, width: 12, height: 12, borderRadius: "50%", background: PALETTE.coral, border: "2px solid " + PALETTE.paper }} />
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div style={{ fontFamily: "'Fraunces', serif", fontWeight: 600, fontSize: 15.5, color: PALETTE.ink }}>
-                    {day.title || `Den ${i + 1}`}
+                <button
+                  onClick={() => onOpenDay(day.id)}
+                  style={{ display: "block", width: "100%", textAlign: "left", background: "none", border: "none", padding: 0, cursor: "pointer" }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div style={{ fontFamily: "'Fraunces', serif", fontWeight: 600, fontSize: 15.5, color: PALETTE.ink }}>
+                      {day.title || `Den ${i + 1}`}
+                    </div>
+                    <span style={{ fontSize: 12, color: PALETTE.ink, opacity: 0.5 }}>{formatDateCz(day.date)}</span>
                   </div>
-                  <span style={{ fontSize: 12, color: PALETTE.ink, opacity: 0.5 }}>{formatDateCz(day.date)}</span>
+                </button>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
+                  <div style={{ fontSize: 12.5, color: PALETTE.teal }}>
+                    {photoCounts[day.id] || 0} {(photoCounts[day.id] || 0) === 1 ? "fotka" : "fotek"} · {(day.points?.length || 0)} {(day.points?.length || 0) === 1 ? "zastávka" : "zastávek"}
+                  </div>
+                  <button
+                    onClick={() => onPlayDay(day.id)}
+                    aria-label="Přehrát prezentaci dne"
+                    style={{ width: 26, height: 26, borderRadius: "50%", background: PALETTE.coral, border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}
+                  >
+                    <Play size={12} color="#fff" fill="#fff" style={{ marginLeft: 1.5 }} />
+                  </button>
                 </div>
-                <div style={{ fontSize: 12.5, color: PALETTE.teal, marginTop: 4 }}>
-                  {photoCounts[day.id] || 0} {(photoCounts[day.id] || 0) === 1 ? "fotka" : "fotek"} · {(day.points?.length || 0)} {(day.points?.length || 0) === 1 ? "zastávka" : "zastávek"}
-                </div>
-              </button>
+              </div>
             ))}
           </div>
         </div>
@@ -1139,9 +1152,13 @@ function buildSlides(trip, allPhotos) {
         slides.push({ kind: "photo", dayId: day.id, pointId: pt.id, photoId: ph.id });
       });
     });
-    photos.filter((ph) => !ph.pointId).forEach((ph) => {
-      slides.push({ kind: "photo", dayId: day.id, pointId: null, photoId: ph.id });
-    });
+    const unassigned = photos.filter((ph) => !ph.pointId);
+    if (unassigned.length > 0) {
+      slides.push({ kind: "section", dayId: day.id, label: "Ostatní fotky dne" });
+      unassigned.forEach((ph) => {
+        slides.push({ kind: "photo", dayId: day.id, pointId: null, photoId: ph.id });
+      });
+    }
   });
   return slides;
 }
@@ -1162,7 +1179,7 @@ function PresentationScreen({ trip, allPhotos, onExit }) {
 
   useEffect(() => {
     if (!playing || !slide) return;
-    const dur = slide.kind === "day" ? 4200 : slide.kind === "point" ? 3000 : 3400;
+    const dur = slide.kind === "day" ? 4200 : slide.kind === "point" ? 3000 : slide.kind === "section" ? 2000 : 3400;
     const t = setTimeout(() => {
       setIdx((i) => {
         if (i + 1 < slides.length) return i + 1;
@@ -1249,6 +1266,12 @@ function PresentationScreen({ trip, allPhotos, onExit }) {
             )}
             <RouteMap points={day.points} editable={false} height="42vh" focusItemId={point.id} />
           </>
+        )}
+        {slide.kind === "section" && (
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12 }}>
+            <Camera size={30} color={PALETTE.gold} />
+            <div style={{ fontFamily: "'Fraunces', serif", fontSize: 22, fontWeight: 600, textAlign: "center" }}>{slide.label}</div>
+          </div>
         )}
         {slide.kind === "photo" && photo && (
           <>
@@ -1634,6 +1657,7 @@ export default function CestovatelskyDenik() {
           onAddDay={() => addDay(currentTrip.id)}
           onOpenDay={(dayId) => setView({ screen: "day", tripId: currentTrip.id, dayId })}
           onStartPresentation={() => setView({ screen: "presentation", tripId: currentTrip.id })}
+          onPlayDay={(dayId) => setView({ screen: "presentation", tripId: currentTrip.id, dayId })}
           onOpenRestaurants={() => setView({ screen: "restaurants", tripId: currentTrip.id })}
           onOpenHighlights={() => setView({ screen: "highlights", tripId: currentTrip.id })}
           onOpenFavorites={() => setView({ screen: "favorites", tripId: currentTrip.id })}
@@ -1711,7 +1735,11 @@ export default function CestovatelskyDenik() {
           onRemovePhoto={(photoId) => removePhotoFromDay(currentTrip.id, currentDay.id, photoId)}
         />
       ) : view.screen === "presentation" && currentTrip ? (
-        <PresentationScreen trip={currentTrip} allPhotos={dayPhotos} onExit={() => setView({ screen: "trip", tripId: currentTrip.id })} />
+        <PresentationScreen
+          trip={view.dayId ? { ...currentTrip, days: currentTrip.days.filter((d) => d.id === view.dayId) } : currentTrip}
+          allPhotos={dayPhotos}
+          onExit={() => setView({ screen: "trip", tripId: currentTrip.id })}
+        />
       ) : (
         <div style={{ padding: 40, textAlign: "center" }}>
           <button onClick={() => setView({ screen: "list" })} style={btnPrimary}>Zpět na seznam</button>
