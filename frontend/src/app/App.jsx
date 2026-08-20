@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import {
   Plus, ChevronLeft, Camera, X, Play, Pause, MapPin,
   SkipBack, SkipForward, Music, Trash2, Calendar, Search, Loader2, Route as RouteIcon,
-  Plane, Car, Bike, Footprints, Ship
+  Plane, Car, Bike, Footprints, Ship, ChevronUp, ChevronDown, Utensils, Sparkles, Star
 } from "lucide-react";
 
 // ---------------------------------------------------------------------
@@ -477,14 +477,14 @@ function TripListScreen({ trips, onOpenTrip, onCreateTrip, dbStatus, dbError, la
 
 // -------------------- Trip detail screen (list of days) ------------------
 
-function TripDetailScreen({ trip, photoCounts, onBack, onAddDay, onOpenDay, onStartPresentation, onDeleteTrip }) {
+function TripDetailScreen({ trip, photoCounts, onBack, onAddDay, onOpenDay, onStartPresentation, onOpenRestaurants, onOpenHighlights, onOpenFavorites, onDeleteTrip }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   return (
     <div style={{ padding: "16px 18px 90px" }}>
       <TopBar onBack={onBack} title={trip.name} />
 
-      <div style={{ display: "flex", gap: 8, margin: "14px 0 20px" }}>
+      <div style={{ display: "flex", gap: 8, margin: "14px 0 10px" }}>
         <button onClick={onAddDay} style={{ ...btnPrimary, flex: 1 }}>
           <Plus size={16} style={{ marginRight: 6, verticalAlign: -3 }} /> Přidat den
         </button>
@@ -493,6 +493,18 @@ function TripDetailScreen({ trip, photoCounts, onBack, onAddDay, onOpenDay, onSt
             <Play size={15} style={{ marginRight: 6, verticalAlign: -2 }} fill={PALETTE.cream} /> Prezentace
           </button>
         )}
+      </div>
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+        <button onClick={onOpenRestaurants} style={{ ...btnGhost, flex: 1, fontSize: 12.5, padding: "9px 0" }}>
+          <Utensils size={14} style={{ marginRight: 5, verticalAlign: -2 }} /> Jídlo
+        </button>
+        <button onClick={onOpenHighlights} style={{ ...btnGhost, flex: 1, fontSize: 12.5, padding: "9px 0" }}>
+          <Sparkles size={14} style={{ marginRight: 5, verticalAlign: -2 }} /> Zajímavosti
+        </button>
+        <button onClick={onOpenFavorites} style={{ ...btnGhost, flex: 1, fontSize: 12.5, padding: "9px 0" }}>
+          <Star size={14} style={{ marginRight: 5, verticalAlign: -2 }} /> Místa
+        </button>
       </div>
 
       {trip.days.length === 0 ? (
@@ -574,7 +586,7 @@ function PhotoStrip({ photos, pendingCount = 0, onOpen, onAdd }) {
   );
 }
 
-function ItemRow({ item, index, total, photos, pendingCount, onRenameFrom, onRenameTo, onRenameNote, onSetTransport, onRemove, onOpenPhoto, onAddPhoto }) {
+function ItemRow({ item, index, total, photos, pendingCount, onRenameFrom, onRenameTo, onRenameNote, onSetTransport, onRemove, onMoveUp, onMoveDown, onOpenPhoto, onAddPhoto }) {
   const [fromLabel, setFromLabel] = useState(item.label);
   const [toLabel, setToLabel] = useState(item.toLabel || "");
   const [note, setNote] = useState(item.note || "");
@@ -601,6 +613,22 @@ function ItemRow({ item, index, total, photos, pendingCount, onRenameFrom, onRen
   return (
     <div style={{ background: PALETTE.cream, border: `1px solid ${PALETTE.paperDeep}`, borderRadius: 12, padding: 10 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          <button
+            onClick={() => onMoveUp(item.id)}
+            disabled={index === 0}
+            style={{ background: "none", border: "none", color: PALETTE.ink, opacity: index === 0 ? 0.2 : 0.5, cursor: index === 0 ? "default" : "pointer", padding: 1, lineHeight: 0 }}
+          >
+            <ChevronUp size={15} />
+          </button>
+          <button
+            onClick={() => onMoveDown(item.id)}
+            disabled={index === total - 1}
+            style={{ background: "none", border: "none", color: PALETTE.ink, opacity: index === total - 1 ? 0.2 : 0.5, cursor: index === total - 1 ? "default" : "pointer", padding: 1, lineHeight: 0 }}
+          >
+            <ChevronDown size={15} />
+          </button>
+        </div>
         <StopBadge index={index} total={total} kind={item.kind} transport={item.transport} />
         {item.kind === "route" ? (
           <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
@@ -665,7 +693,7 @@ function ItemRow({ item, index, total, photos, pendingCount, onRenameFrom, onRen
   );
 }
 
-function DayDetailScreen({ day, photos, onBack, onUpdateDay, onAddItem, onRenameItem, onRemoveItem, onAddPhoto, onRemovePhoto }) {
+function DayDetailScreen({ day, photos, onBack, onUpdateDay, onAddItem, onRenameItem, onRemoveItem, onReorderItems, onAddPhoto, onRemovePhoto }) {
   const fileInputRef = useRef(null);
   const uploadTargetRef = useRef(null);
   const [title, setTitle] = useState(day.title || "");
@@ -709,6 +737,15 @@ function DayDetailScreen({ day, photos, onBack, onUpdateDay, onAddItem, onRename
   const switchMode = (next) => {
     setMode(next);
     setRouteDraft(null);
+  };
+
+  const moveItem = (pointId, direction) => {
+    const idx = points.findIndex((p) => p.id === pointId);
+    const swapIdx = direction === "up" ? idx - 1 : idx + 1;
+    if (idx < 0 || swapIdx < 0 || swapIdx >= points.length) return;
+    const next = [...points];
+    [next[idx], next[swapIdx]] = [next[swapIdx], next[idx]];
+    onReorderItems(next);
   };
 
   // Každá fotka se zpracuje a nahraje samostatně, na pozadí, bez blokování
@@ -823,6 +860,8 @@ function DayDetailScreen({ day, photos, onBack, onUpdateDay, onAddItem, onRename
               onRenameNote={(id, note) => onRenameItem(id, { note })}
               onSetTransport={(id, transport) => onRenameItem(id, { transport })}
               onRemove={onRemoveItem}
+              onMoveUp={(id) => moveItem(id, "up")}
+              onMoveDown={(id) => moveItem(id, "down")}
               onOpenPhoto={setViewerPhoto}
               onAddPhoto={openFilePicker}
             />
@@ -846,6 +885,239 @@ function DayDetailScreen({ day, photos, onBack, onUpdateDay, onAddItem, onRename
               <Trash2 size={14} style={{ marginRight: 6, verticalAlign: -2 }} /> Smazat fotku
             </button>
             <button onClick={() => setViewerPhoto(null)} style={{ ...btnGhost, color: "#fff", borderColor: "rgba(255,255,255,0.3)" }}>Zavřít</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// -------------------- Restaurants / Highlights (trip-level entries) ------
+
+function RestaurantRow({ item, photos, pendingCount, onUpdate, onRemove, onOpenPhoto, onAddPhoto }) {
+  const [name, setName] = useState(item.name || "");
+  const [address, setAddress] = useState(item.address || "");
+  const [note, setNote] = useState(item.note || "");
+
+  useEffect(() => { const t = setTimeout(() => { if (name !== (item.name || "")) onUpdate(item.id, { name }); }, 500); return () => clearTimeout(t); }, [name]); // eslint-disable-line
+  useEffect(() => { const t = setTimeout(() => { if (address !== (item.address || "")) onUpdate(item.id, { address }); }, 500); return () => clearTimeout(t); }, [address]); // eslint-disable-line
+  useEffect(() => { const t = setTimeout(() => { if (note !== (item.note || "")) onUpdate(item.id, { note }); }, 500); return () => clearTimeout(t); }, [note]); // eslint-disable-line
+
+  return (
+    <div style={{ background: PALETTE.cream, border: `1px solid ${PALETTE.paperDeep}`, borderRadius: 12, padding: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <Utensils size={16} color={PALETTE.coral} style={{ flexShrink: 0 }} />
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Název restaurace" style={{ ...inputStyle, flex: 1, background: "#fff", fontWeight: 600 }} />
+        <button onClick={() => onRemove(item.id)} style={{ background: "none", border: "none", color: PALETTE.ink, opacity: 0.4, cursor: "pointer", padding: 4 }}><X size={16} /></button>
+      </div>
+      <input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Adresa" style={{ ...inputStyle, width: "100%", marginTop: 8, background: "#fff" }} />
+      <textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Poznámka (co jsme si dali, doporučení…)" rows={2} style={{ ...inputStyle, width: "100%", marginTop: 8, background: "#fff", resize: "vertical", fontFamily: "inherit" }} />
+      <div style={{ marginTop: 8 }}>
+        <PhotoStrip photos={photos} pendingCount={pendingCount} onOpen={onOpenPhoto} onAdd={() => onAddPhoto(item.id)} />
+      </div>
+    </div>
+  );
+}
+
+function HighlightRow({ item, photos, pendingCount, onUpdate, onRemove, onOpenPhoto, onAddPhoto }) {
+  const [title, setTitle] = useState(item.title || "");
+  const [note, setNote] = useState(item.note || "");
+
+  useEffect(() => { const t = setTimeout(() => { if (title !== (item.title || "")) onUpdate(item.id, { title }); }, 500); return () => clearTimeout(t); }, [title]); // eslint-disable-line
+  useEffect(() => { const t = setTimeout(() => { if (note !== (item.note || "")) onUpdate(item.id, { note }); }, 500); return () => clearTimeout(t); }, [note]); // eslint-disable-line
+
+  return (
+    <div style={{ background: PALETTE.cream, border: `1px solid ${PALETTE.paperDeep}`, borderRadius: 12, padding: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <Sparkles size={16} color={PALETTE.gold} style={{ flexShrink: 0 }} />
+        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Název zajímavosti" style={{ ...inputStyle, flex: 1, background: "#fff", fontWeight: 600 }} />
+        <button onClick={() => onRemove(item.id)} style={{ background: "none", border: "none", color: PALETTE.ink, opacity: 0.4, cursor: "pointer", padding: 4 }}><X size={16} /></button>
+      </div>
+      <textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Popis…" rows={3} style={{ ...inputStyle, width: "100%", marginTop: 8, background: "#fff", resize: "vertical", fontFamily: "inherit" }} />
+      <div style={{ marginTop: 8 }}>
+        <PhotoStrip photos={photos} pendingCount={pendingCount} onOpen={onOpenPhoto} onAdd={() => onAddPhoto(item.id)} />
+      </div>
+    </div>
+  );
+}
+
+// Sdílená obrazovka pro Jídlo i Zajímavosti — liší se jen tím, jak se
+// vykresluje jeden řádek (renderRow).
+function EntriesScreen({ title, emptyText, addLabel, entries, photosMap, renderRow, onBack, onAddEntry, onAddPhoto, onRemovePhoto }) {
+  const fileInputRef = useRef(null);
+  const uploadTargetRef = useRef(null);
+  const [pendingUploads, setPendingUploads] = useState([]); // [{ tempId, entryId }]
+  const [viewerPhoto, setViewerPhoto] = useState(null);
+
+  const openFilePicker = (entryId) => {
+    uploadTargetRef.current = entryId;
+    fileInputRef.current?.click();
+  };
+
+  const handleFiles = (e) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    const entryId = uploadTargetRef.current;
+    const batch = files.map((file) => ({ tempId: uid(), entryId, file }));
+    setPendingUploads((prev) => [...prev, ...batch.map(({ tempId, entryId }) => ({ tempId, entryId }))]);
+    e.target.value = "";
+
+    batch.forEach(async ({ tempId, entryId, file }) => {
+      try {
+        const src = await compressImage(file);
+        await onAddPhoto(entryId, src);
+      } catch {
+        // přeskoč soubor, který se nepodařilo zpracovat nebo nahrát
+      } finally {
+        setPendingUploads((prev) => prev.filter((p) => p.tempId !== tempId));
+      }
+    });
+  };
+
+  return (
+    <div style={{ padding: "16px 18px 90px" }}>
+      <TopBar onBack={onBack} title={title} />
+
+      {pendingUploads.length > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, background: PALETTE.cream, border: `1px solid ${PALETTE.paperDeep}`, borderRadius: 10, padding: "8px 12px", marginTop: 14, fontSize: 12.5, color: PALETTE.teal }}>
+          <Loader2 size={14} className="cd-spin" />
+          Nahrávám {pendingUploads.length} {pendingUploads.length === 1 ? "fotku" : pendingUploads.length < 5 ? "fotky" : "fotek"}…
+        </div>
+      )}
+
+      {entries.length === 0 ? (
+        <EmptyHint text={emptyText} />
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 16 }}>
+          {entries.map((item) =>
+            renderRow(
+              item,
+              photosMap[item.id] || [],
+              pendingUploads.filter((p) => p.entryId === item.id).length,
+              openFilePicker,
+              (photo) => setViewerPhoto({ ...photo, entryId: item.id })
+            )
+          )}
+        </div>
+      )}
+
+      <button onClick={onAddEntry} style={{ marginTop: 16, width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "13px 0", borderRadius: 14, border: "none", background: PALETTE.ink, color: PALETTE.cream, fontSize: 15, fontWeight: 600, cursor: "pointer" }}>
+        <Plus size={18} /> {addLabel}
+      </button>
+
+      <input ref={fileInputRef} type="file" accept="image/*" multiple onChange={handleFiles} style={{ display: "none" }} />
+
+      {viewerPhoto && (
+        <div
+          onClick={() => setViewerPhoto(null)}
+          style={{ position: "fixed", inset: 0, background: "rgba(15,20,30,0.92)", zIndex: 50, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 20 }}
+        >
+          <img src={viewerPhoto.src} alt="" style={{ maxWidth: "100%", maxHeight: "78vh", borderRadius: 10, objectFit: "contain" }} onClick={(e) => e.stopPropagation()} />
+          <div style={{ display: "flex", gap: 16, marginTop: 18 }}>
+            <button onClick={(e) => { e.stopPropagation(); onRemovePhoto(viewerPhoto.entryId, viewerPhoto.id); setViewerPhoto(null); }} style={btnDanger}>
+              <Trash2 size={14} style={{ marginRight: 6, verticalAlign: -2 }} /> Smazat fotku
+            </button>
+            <button onClick={() => setViewerPhoto(null)} style={{ ...btnGhost, color: "#fff", borderColor: "rgba(255,255,255,0.3)" }}>Zavřít</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// -------------------- Favorites (best places, picked from days) ---------
+
+function FavoriteRow({ favorite, point, day, onUpdateNote, onRemove }) {
+  const [note, setNote] = useState(favorite.note || "");
+  useEffect(() => { const t = setTimeout(() => { if (note !== (favorite.note || "")) onUpdateNote(favorite.id, note); }, 500); return () => clearTimeout(t); }, [note]); // eslint-disable-line
+
+  return (
+    <div style={{ background: PALETTE.cream, border: `1px solid ${PALETTE.paperDeep}`, borderRadius: 12, padding: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        {point.kind === "route" ? React.createElement(TRANSPORT_ICONS[point.transport] || RouteIcon, { size: 18, color: PALETTE.coral }) : <MapPin size={18} color={PALETTE.coral} />}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 600, fontSize: 14.5, color: PALETTE.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {point.kind === "route" ? `${point.label || "Odkud"} → ${point.toLabel || "Kam"}` : (point.label || "Zastávka")}
+          </div>
+          <div style={{ fontSize: 11.5, color: PALETTE.teal }}>{day.title || formatDateCz(day.date)}</div>
+        </div>
+        <button onClick={() => onRemove(favorite.id)} style={{ background: "none", border: "none", color: PALETTE.ink, opacity: 0.4, cursor: "pointer", padding: 4 }}><X size={16} /></button>
+      </div>
+      <textarea
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        placeholder="Proč se ti tohle místo líbilo…"
+        rows={2}
+        style={{ ...inputStyle, width: "100%", marginTop: 8, background: "#fff", resize: "vertical", fontFamily: "inherit" }}
+      />
+    </div>
+  );
+}
+
+function FavoritesScreen({ trip, favorites, onBack, onAddFavorite, onUpdateNote, onRemoveFavorite }) {
+  const [picking, setPicking] = useState(false);
+  const favoritedIds = useMemo(() => new Set(favorites.map((f) => f.pointId)), [favorites]);
+
+  const resolvePoint = (pointId) => {
+    for (const day of trip.days) {
+      const p = day.points.find((pt) => pt.id === pointId);
+      if (p) return { point: p, day };
+    }
+    return null;
+  };
+
+  return (
+    <div style={{ padding: "16px 18px 90px" }}>
+      <TopBar onBack={onBack} title="Nejlepší místa" />
+
+      {favorites.length === 0 ? (
+        <EmptyHint text="Zatím žádná vybraná místa — přidej ze zastávek a cest jednotlivých dní." />
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 16 }}>
+          {favorites.map((fav) => {
+            const resolved = resolvePoint(fav.pointId);
+            if (!resolved) return null;
+            return <FavoriteRow key={fav.id} favorite={fav} point={resolved.point} day={resolved.day} onUpdateNote={onUpdateNote} onRemove={onRemoveFavorite} />;
+          })}
+        </div>
+      )}
+
+      <button onClick={() => setPicking(true)} style={{ marginTop: 16, width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "13px 0", borderRadius: 14, border: "none", background: PALETTE.ink, color: PALETTE.cream, fontSize: 15, fontWeight: 600, cursor: "pointer" }}>
+        <Plus size={18} /> Přidat místo
+      </button>
+
+      {picking && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(15,20,30,0.94)", zIndex: 50, display: "flex", flexDirection: "column", padding: 20 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+            <div style={{ color: PALETTE.cream, fontFamily: "'Fraunces', serif", fontSize: 18 }}>Vyber místo</div>
+            <button onClick={() => setPicking(false)} style={iconBtnDark}><X size={20} /></button>
+          </div>
+          <div style={{ flex: 1, overflowY: "auto" }}>
+            {trip.days.length === 0 && <div style={{ color: PALETTE.cream, opacity: 0.5, fontSize: 13 }}>Zatím nemáš žádné dny s body.</div>}
+            {trip.days.map((day) => {
+              const available = day.points.filter((p) => !favoritedIds.has(p.id));
+              return (
+                <div key={day.id} style={{ marginBottom: 18 }}>
+                  <div style={{ color: PALETTE.cream, opacity: 0.55, fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>
+                    {day.title || formatDateCz(day.date)}
+                  </div>
+                  {available.length === 0 ? (
+                    <div style={{ color: PALETTE.cream, opacity: 0.35, fontSize: 12.5, paddingLeft: 2 }}>Vše už je vybráno</div>
+                  ) : (
+                    available.map((p) => (
+                      <button
+                        key={p.id}
+                        onClick={() => { onAddFavorite(p.id); setPicking(false); }}
+                        style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left", background: "rgba(244,239,227,0.08)", border: "none", borderRadius: 10, padding: "10px 12px", marginBottom: 6, cursor: "pointer", color: PALETTE.cream }}
+                      >
+                        {p.kind === "route" ? React.createElement(TRANSPORT_ICONS[p.transport] || RouteIcon, { size: 16 }) : <MapPin size={16} />}
+                        <span style={{ fontSize: 13.5 }}>{p.kind === "route" ? `${p.label || "Odkud"} → ${p.toLabel || "Kam"}` : (p.label || "Zastávka")}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -951,12 +1223,12 @@ function PresentationScreen({ trip, allPhotos, onExit }) {
         <div style={{ height: "100%", width: `${progress * 100}%`, background: PALETTE.coral, transition: "width 0.3s" }} />
       </div>
 
-      <div key={idx} className="cd-fadein" style={{ flex: 1, display: "flex", flexDirection: "column", padding: "16px 20px", overflow: "hidden" }}>
+      <div key={idx} className="cd-fadein" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", padding: "16px 20px", overflowY: "auto" }}>
         {slide.kind === "day" && (
           <>
             <div style={{ fontFamily: "'Fraunces', serif", fontSize: 22, fontWeight: 600, marginBottom: 2 }}>{day.title || `Den ${dayIndex + 1}`}</div>
             <div style={{ fontSize: 12.5, opacity: 0.6, marginBottom: 14 }}>{formatDateCz(day.date)}</div>
-            <div style={{ flex: 1, minHeight: 0 }}><RouteMap points={day.points} editable={false} height="100%" showLabelsAlways /></div>
+            <RouteMap points={day.points} editable={false} height="48vh" showLabelsAlways />
           </>
         )}
         {slide.kind === "point" && point && (
@@ -975,7 +1247,7 @@ function PresentationScreen({ trip, allPhotos, onExit }) {
                 {point.note}
               </div>
             )}
-            <div style={{ flex: 1, minHeight: 0 }}><RouteMap points={day.points} editable={false} height="100%" focusItemId={point.id} /></div>
+            <RouteMap points={day.points} editable={false} height="42vh" focusItemId={point.id} />
           </>
         )}
         {slide.kind === "photo" && photo && (
@@ -1038,6 +1310,8 @@ const iconBtnDark = { border: "none", background: "rgba(244,239,227,0.12)", colo
 export default function CestovatelskyDenik() {
   const [trips, setTrips] = useState([]);
   const [dayPhotos, setDayPhotos] = useState({});
+  const [restaurantPhotos, setRestaurantPhotos] = useState({});
+  const [highlightPhotos, setHighlightPhotos] = useState({});
   const [loaded, setLoaded] = useState(false);
   const [view, setView] = useState({ screen: "list" });
   const [dbStatus, setDbStatus] = useState("loading"); // loading | ok | error
@@ -1048,11 +1322,16 @@ export default function CestovatelskyDenik() {
   useEffect(() => {
     (async () => {
       try {
-        const [tripsRows, daysRows, pointsRows, photosRows] = await Promise.all([
+        const [tripsRows, daysRows, pointsRows, photosRows, restaurantsRows, restaurantPhotosRows, highlightsRows, highlightPhotosRows, favoritesRows] = await Promise.all([
           sb("trips?select=*&order=created_at.asc"),
           sb("days?select=*&order=created_at.asc"),
           sb("points?select=*&order=position.asc"),
           sb("photos?select=*&order=created_at.asc"),
+          sb("restaurants?select=*&order=position.asc"),
+          sb("restaurant_photos?select=*&order=created_at.asc"),
+          sb("highlights?select=*&order=position.asc"),
+          sb("highlight_photos?select=*&order=created_at.asc"),
+          sb("favorites?select=*&order=position.asc"),
         ]);
         const assembled = tripsRows.map((t) => ({
           id: t.id,
@@ -1071,13 +1350,26 @@ export default function CestovatelskyDenik() {
                   toLat: p.to_lat ?? null, toLng: p.to_lng ?? null, toLabel: p.to_label || "",
                 })),
             })),
+          restaurants: restaurantsRows.filter((r) => r.trip_id === t.id).map((r) => ({ id: r.id, name: r.name || "", address: r.address || "", note: r.note || "" })),
+          highlights: highlightsRows.filter((h) => h.trip_id === t.id).map((h) => ({ id: h.id, title: h.title || "", note: h.note || "" })),
+          favorites: favoritesRows.filter((f) => f.trip_id === t.id).map((f) => ({ id: f.id, pointId: f.point_id, note: f.note || "" })),
         }));
         const photosMap = {};
         for (const ph of photosRows) {
           (photosMap[ph.day_id] ||= []).push({ id: ph.id, src: ph.src, pointId: ph.point_id });
         }
+        const restaurantPhotosMap = {};
+        for (const ph of restaurantPhotosRows) {
+          (restaurantPhotosMap[ph.restaurant_id] ||= []).push({ id: ph.id, src: ph.src });
+        }
+        const highlightPhotosMap = {};
+        for (const ph of highlightPhotosRows) {
+          (highlightPhotosMap[ph.highlight_id] ||= []).push({ id: ph.id, src: ph.src });
+        }
         setTrips(assembled);
         setDayPhotos(photosMap);
+        setRestaurantPhotos(restaurantPhotosMap);
+        setHighlightPhotos(highlightPhotosMap);
         setDbStatus("ok");
         setDbError(null);
       } catch (err) {
@@ -1113,7 +1405,7 @@ export default function CestovatelskyDenik() {
 
   const createTrip = (name) => {
     const id = uid();
-    setTrips((prev) => [{ id, name, days: [] }, ...prev]);
+    setTrips((prev) => [{ id, name, days: [], restaurants: [], highlights: [], favorites: [] }, ...prev]);
     withSave(() => sb("trips", { method: "POST", body: JSON.stringify({ id, name }) }));
   };
 
@@ -1171,14 +1463,127 @@ export default function CestovatelskyDenik() {
   };
 
   const removeItem = (tripId, dayId, pointId) => {
+    let remaining = null;
     setTrips((prev) => prev.map((t) => t.id !== tripId ? t : {
-      ...t, days: t.days.map((d) => d.id !== dayId ? d : { ...d, points: d.points.filter((p) => p.id !== pointId) }),
+      ...t, days: t.days.map((d) => {
+        if (d.id !== dayId) return d;
+        remaining = d.points.filter((p) => p.id !== pointId);
+        return { ...d, points: remaining };
+      }),
     }));
     setDayPhotos((prev) => ({
       ...prev,
       [dayId]: (prev[dayId] || []).map((ph) => (ph.pointId === pointId ? { ...ph, pointId: null } : ph)),
     }));
     withSave(() => sb(`points?id=eq.${pointId}`, { method: "DELETE", prefer: "return=minimal" }));
+    // Přečíslujeme zbylé položky na 0..n-1, ať se pořadí po smazání nerozhodí.
+    if (remaining) {
+      remaining.forEach((p, idx) => {
+        withSave(() => sb(`points?id=eq.${p.id}`, { method: "PATCH", body: JSON.stringify({ position: idx }) }));
+      });
+    }
+  };
+
+  const reorderItems = (tripId, dayId, orderedPoints) => {
+    setTrips((prev) => prev.map((t) => t.id !== tripId ? t : {
+      ...t, days: t.days.map((d) => d.id !== dayId ? d : { ...d, points: orderedPoints }),
+    }));
+    orderedPoints.forEach((p, idx) => {
+      withSave(() => sb(`points?id=eq.${p.id}`, { method: "PATCH", body: JSON.stringify({ position: idx }) }));
+    });
+  };
+
+  // ---- Jídlo (restaurace) ----
+  const addRestaurant = (tripId) => {
+    const id = uid();
+    let position = 0;
+    setTrips((prev) => prev.map((t) => {
+      if (t.id !== tripId) return t;
+      position = t.restaurants.length;
+      return { ...t, restaurants: [...t.restaurants, { id, name: "", address: "", note: "" }] };
+    }));
+    withSave(() => sb("restaurants", { method: "POST", body: JSON.stringify({ id, trip_id: tripId, name: "", address: "", note: "", position }) }));
+  };
+
+  const updateRestaurant = (tripId, id, patch) => {
+    setTrips((prev) => prev.map((t) => t.id !== tripId ? t : { ...t, restaurants: t.restaurants.map((r) => r.id === id ? { ...r, ...patch } : r) }));
+    withSave(() => sb(`restaurants?id=eq.${id}`, { method: "PATCH", body: JSON.stringify(patch) }));
+  };
+
+  const removeRestaurant = (tripId, id) => {
+    setTrips((prev) => prev.map((t) => t.id !== tripId ? t : { ...t, restaurants: t.restaurants.filter((r) => r.id !== id) }));
+    setRestaurantPhotos((prev) => { const next = { ...prev }; delete next[id]; return next; });
+    withSave(() => sb(`restaurants?id=eq.${id}`, { method: "DELETE", prefer: "return=minimal" }));
+  };
+
+  const addRestaurantPhoto = async (restaurantId, src) => {
+    const photo = { id: uid(), src };
+    setRestaurantPhotos((prev) => ({ ...prev, [restaurantId]: [...(prev[restaurantId] || []), photo] }));
+    await withSave(() => sb("restaurant_photos", { method: "POST", body: JSON.stringify([{ id: photo.id, restaurant_id: restaurantId, src }]) }));
+  };
+
+  const removeRestaurantPhoto = (restaurantId, photoId) => {
+    setRestaurantPhotos((prev) => ({ ...prev, [restaurantId]: (prev[restaurantId] || []).filter((p) => p.id !== photoId) }));
+    withSave(() => sb(`restaurant_photos?id=eq.${photoId}`, { method: "DELETE", prefer: "return=minimal" }));
+  };
+
+  // ---- Zajímavosti ----
+  const addHighlight = (tripId) => {
+    const id = uid();
+    let position = 0;
+    setTrips((prev) => prev.map((t) => {
+      if (t.id !== tripId) return t;
+      position = t.highlights.length;
+      return { ...t, highlights: [...t.highlights, { id, title: "", note: "" }] };
+    }));
+    withSave(() => sb("highlights", { method: "POST", body: JSON.stringify({ id, trip_id: tripId, title: "", note: "", position }) }));
+  };
+
+  const updateHighlight = (tripId, id, patch) => {
+    setTrips((prev) => prev.map((t) => t.id !== tripId ? t : { ...t, highlights: t.highlights.map((h) => h.id === id ? { ...h, ...patch } : h) }));
+    withSave(() => sb(`highlights?id=eq.${id}`, { method: "PATCH", body: JSON.stringify(patch) }));
+  };
+
+  const removeHighlight = (tripId, id) => {
+    setTrips((prev) => prev.map((t) => t.id !== tripId ? t : { ...t, highlights: t.highlights.filter((h) => h.id !== id) }));
+    setHighlightPhotos((prev) => { const next = { ...prev }; delete next[id]; return next; });
+    withSave(() => sb(`highlights?id=eq.${id}`, { method: "DELETE", prefer: "return=minimal" }));
+  };
+
+  const addHighlightPhoto = async (highlightId, src) => {
+    const photo = { id: uid(), src };
+    setHighlightPhotos((prev) => ({ ...prev, [highlightId]: [...(prev[highlightId] || []), photo] }));
+    await withSave(() => sb("highlight_photos", { method: "POST", body: JSON.stringify([{ id: photo.id, highlight_id: highlightId, src }]) }));
+  };
+
+  const removeHighlightPhoto = (highlightId, photoId) => {
+    setHighlightPhotos((prev) => ({ ...prev, [highlightId]: (prev[highlightId] || []).filter((p) => p.id !== photoId) }));
+    withSave(() => sb(`highlight_photos?id=eq.${photoId}`, { method: "DELETE", prefer: "return=minimal" }));
+  };
+
+  // ---- Nejlepší místa (výběr z bodů dní) ----
+  const addFavorite = (tripId, pointId) => {
+    const id = uid();
+    let position = 0;
+    let already = false;
+    setTrips((prev) => prev.map((t) => {
+      if (t.id !== tripId) return t;
+      if (t.favorites.some((f) => f.pointId === pointId)) { already = true; return t; }
+      position = t.favorites.length;
+      return { ...t, favorites: [...t.favorites, { id, pointId, note: "" }] };
+    }));
+    if (already) return;
+    withSave(() => sb("favorites", { method: "POST", body: JSON.stringify({ id, trip_id: tripId, point_id: pointId, note: "", position }) }));
+  };
+
+  const updateFavoriteNote = (tripId, id, note) => {
+    setTrips((prev) => prev.map((t) => t.id !== tripId ? t : { ...t, favorites: t.favorites.map((f) => f.id === id ? { ...f, note } : f) }));
+    withSave(() => sb(`favorites?id=eq.${id}`, { method: "PATCH", body: JSON.stringify({ note }) }));
+  };
+
+  const removeFavorite = (tripId, id) => {
+    setTrips((prev) => prev.map((t) => t.id !== tripId ? t : { ...t, favorites: t.favorites.filter((f) => f.id !== id) }));
+    withSave(() => sb(`favorites?id=eq.${id}`, { method: "DELETE", prefer: "return=minimal" }));
   };
 
   const addPhotoToDay = async (tripId, dayId, src, pointId) => {
@@ -1229,7 +1634,67 @@ export default function CestovatelskyDenik() {
           onAddDay={() => addDay(currentTrip.id)}
           onOpenDay={(dayId) => setView({ screen: "day", tripId: currentTrip.id, dayId })}
           onStartPresentation={() => setView({ screen: "presentation", tripId: currentTrip.id })}
+          onOpenRestaurants={() => setView({ screen: "restaurants", tripId: currentTrip.id })}
+          onOpenHighlights={() => setView({ screen: "highlights", tripId: currentTrip.id })}
+          onOpenFavorites={() => setView({ screen: "favorites", tripId: currentTrip.id })}
           onDeleteTrip={() => deleteTrip(currentTrip.id)}
+        />
+      ) : view.screen === "restaurants" && currentTrip ? (
+        <EntriesScreen
+          title="Jídlo"
+          emptyText="Zatím žádná restaurace — přidej první."
+          addLabel="Přidat restauraci"
+          entries={currentTrip.restaurants}
+          photosMap={restaurantPhotos}
+          onBack={() => setView({ screen: "trip", tripId: currentTrip.id })}
+          onAddEntry={() => addRestaurant(currentTrip.id)}
+          onAddPhoto={(entryId, src) => addRestaurantPhoto(entryId, src)}
+          onRemovePhoto={(entryId, photoId) => removeRestaurantPhoto(entryId, photoId)}
+          renderRow={(item, photos, pendingCount, openFilePicker, onOpenPhoto) => (
+            <RestaurantRow
+              key={item.id}
+              item={item}
+              photos={photos}
+              pendingCount={pendingCount}
+              onUpdate={(id, patch) => updateRestaurant(currentTrip.id, id, patch)}
+              onRemove={(id) => removeRestaurant(currentTrip.id, id)}
+              onOpenPhoto={onOpenPhoto}
+              onAddPhoto={openFilePicker}
+            />
+          )}
+        />
+      ) : view.screen === "highlights" && currentTrip ? (
+        <EntriesScreen
+          title="Zajímavosti"
+          emptyText="Zatím žádná zajímavost — přidej první."
+          addLabel="Přidat zajímavost"
+          entries={currentTrip.highlights}
+          photosMap={highlightPhotos}
+          onBack={() => setView({ screen: "trip", tripId: currentTrip.id })}
+          onAddEntry={() => addHighlight(currentTrip.id)}
+          onAddPhoto={(entryId, src) => addHighlightPhoto(entryId, src)}
+          onRemovePhoto={(entryId, photoId) => removeHighlightPhoto(entryId, photoId)}
+          renderRow={(item, photos, pendingCount, openFilePicker, onOpenPhoto) => (
+            <HighlightRow
+              key={item.id}
+              item={item}
+              photos={photos}
+              pendingCount={pendingCount}
+              onUpdate={(id, patch) => updateHighlight(currentTrip.id, id, patch)}
+              onRemove={(id) => removeHighlight(currentTrip.id, id)}
+              onOpenPhoto={onOpenPhoto}
+              onAddPhoto={openFilePicker}
+            />
+          )}
+        />
+      ) : view.screen === "favorites" && currentTrip ? (
+        <FavoritesScreen
+          trip={currentTrip}
+          favorites={currentTrip.favorites}
+          onBack={() => setView({ screen: "trip", tripId: currentTrip.id })}
+          onAddFavorite={(pointId) => addFavorite(currentTrip.id, pointId)}
+          onUpdateNote={(id, note) => updateFavoriteNote(currentTrip.id, id, note)}
+          onRemoveFavorite={(id) => removeFavorite(currentTrip.id, id)}
         />
       ) : view.screen === "day" && currentTrip && currentDay ? (
         <DayDetailScreen
@@ -1241,6 +1706,7 @@ export default function CestovatelskyDenik() {
           onAddItem={(item) => addItem(currentTrip.id, currentDay.id, item)}
           onRenameItem={(pointId, patch) => renameItem(currentTrip.id, currentDay.id, pointId, patch)}
           onRemoveItem={(pointId) => removeItem(currentTrip.id, currentDay.id, pointId)}
+          onReorderItems={(orderedPoints) => reorderItems(currentTrip.id, currentDay.id, orderedPoints)}
           onAddPhoto={(src, pointId) => addPhotoToDay(currentTrip.id, currentDay.id, src, pointId)}
           onRemovePhoto={(photoId) => removePhotoFromDay(currentTrip.id, currentDay.id, photoId)}
         />
