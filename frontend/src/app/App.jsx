@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { createClient } from "@supabase/supabase-js";
 import {
   Plus, ChevronLeft, Camera, X, Play, Pause, MapPin,
   SkipBack, SkipForward, Music, Trash2, Calendar, Search, Loader2, Route as RouteIcon,
   Plane, Car, Bike, Footprints, Ship, ChevronUp, ChevronDown, Utensils, Sparkles, Star,
-  ExternalLink, Pencil
+  ExternalLink, Pencil, RefreshCw, Share2
 } from "lucide-react";
 
 // ---------------------------------------------------------------------
@@ -51,6 +52,9 @@ async function sb(path, options = {}) {
   const text = await res.text();
   return text ? JSON.parse(text) : null;
 }
+
+// Klient jen pro realtime odběr změn (CRUD operace jedou přes sb() výše).
+const supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 function uid() {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
@@ -392,7 +396,7 @@ function RouteMap({ points, onAddPoint, editable, height = 220, focusItemId = nu
 
 // -------------------- Trip list screen -----------------------------------
 
-function TripListScreen({ trips, onOpenTrip, onCreateTrip, dbStatus, dbError, lastSavedAt }) {
+function TripListScreen({ trips, onOpenTrip, onCreateTrip, dbStatus, dbError, lastSavedAt, onRefresh }) {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
 
@@ -412,11 +416,16 @@ function TripListScreen({ trips, onOpenTrip, onCreateTrip, dbStatus, dbError, la
       <p style={{ color: PALETTE.ink, opacity: 0.55, fontSize: 13, margin: "4px 0 4px" }}>
         {trips.length === 0 ? "Zatím žádné výlety" : `${trips.length} ${trips.length === 1 ? "výlet" : trips.length < 5 ? "výlety" : "výletů"}`}
       </p>
-      <p style={{ fontSize: 11.5, margin: "0 0 8px", color: dbStatus === "error" ? "#B4432E" : PALETTE.teal }}>
-        {dbStatus === "loading" && "Připojuji databázi…"}
-        {dbStatus === "ok" && (lastSavedAt ? `Naposledy uloženo ${new Date(lastSavedAt).toLocaleTimeString("cs-CZ", { hour: "2-digit", minute: "2-digit" })}` : "Databáze připojena")}
-        {dbStatus === "error" && "Poslední akce se nepodařila uložit — zkontroluj připojení"}
-      </p>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, margin: "0 0 8px" }}>
+        <p style={{ fontSize: 11.5, margin: 0, color: dbStatus === "error" ? "#B4432E" : PALETTE.teal, flex: 1 }}>
+          {dbStatus === "loading" && "Připojuji databázi…"}
+          {dbStatus === "ok" && (lastSavedAt ? `Naposledy uloženo ${new Date(lastSavedAt).toLocaleTimeString("cs-CZ", { hour: "2-digit", minute: "2-digit" })}` : "Databáze připojena")}
+          {dbStatus === "error" && "Poslední akce se nepodařila uložit — zkontroluj připojení"}
+        </p>
+        <button onClick={onRefresh} title="Obnovit — zobrazit změny od ostatních" style={{ background: "none", border: "none", color: PALETTE.teal, opacity: 0.7, cursor: "pointer", padding: 2, display: "flex" }}>
+          <RefreshCw size={13} />
+        </button>
+      </div>
       {dbStatus === "error" && dbError && (
         <p style={{
           fontSize: 10.5, fontFamily: "monospace", background: "#fff", border: `1px solid ${PALETTE.paperDeep}`,
@@ -480,12 +489,37 @@ function TripListScreen({ trips, onOpenTrip, onCreateTrip, dbStatus, dbError, la
 
 function TripDetailScreen({ trip, photoCounts, onBack, onAddDay, onOpenDay, onStartPresentation, onPlayDay, onOpenRestaurants, onOpenHighlights, onOpenFavorites, onDeleteTrip }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [shareFeedback, setShareFeedback] = useState("");
+
+  const handleShare = async () => {
+    const shareUrl = `${window.location.origin}${window.location.pathname}?guest=1&trip=${trip.id}`;
+    const shareText = "Sdílím s tebou náš cestovatelský deník 🧭 — odkaz je jen pro tebe, prosím nepřeposílej ho dál nikomu jinému.";
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: "Cestovatelský deník", text: shareText, url: shareUrl });
+      } catch {
+        // uživatel sdílení zrušil — nic neděláme
+      }
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(`${shareText}\n${shareUrl}`);
+      setShareFeedback("Odkaz zkopírován do schránky");
+      setTimeout(() => setShareFeedback(""), 3000);
+    } catch {
+      window.prompt("Zkopíruj tenhle odkaz:", shareUrl);
+    }
+  };
 
   return (
     <div style={{ padding: "16px 18px 90px" }}>
       <TopBar onBack={onBack} title={trip.name} />
 
-      <div style={{ display: "flex", gap: 8, margin: "14px 0 10px" }}>
+      <button onClick={handleShare} style={{ ...btnGhost, width: "100%", marginTop: 14, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+        <Share2 size={15} /> {shareFeedback || "Sdílet s rodinou a přáteli"}
+      </button>
+
+      <div style={{ display: "flex", gap: 8, margin: "10px 0 10px" }}>
         <button onClick={onAddDay} style={{ ...btnPrimary, flex: 1 }}>
           <Plus size={16} style={{ marginRight: 6, verticalAlign: -3 }} /> Přidat den
         </button>
@@ -1139,6 +1173,183 @@ function FavoritesScreen({ trip, favorites, onBack, onAddFavorite, onUpdateNote,
   );
 }
 
+// -------------------- Guest (read-only viewing) screens ------------------
+// Dostupné přes odkaz appka.vercel.app/?guest=1 — jen prohlížení prezentací,
+// jídla, zajímavostí a míst. Bez možnosti cokoliv přidat nebo upravit.
+// Pozor: appka nemá přihlašování, takže tohle je jen zjednodušené rozhraní
+// pro lidi, kterým odkaz sám dáš — ne skutečné zabezpečení dat.
+
+function ViewPhotoGrid({ photos, onOpen }) {
+  if (!photos.length) return null;
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, marginTop: 8 }}>
+      {photos.map((photo) => (
+        <div
+          key={photo.id}
+          onClick={() => onOpen(photo)}
+          style={{ aspectRatio: "1", borderRadius: 8, overflow: "hidden", cursor: "pointer", border: `1px solid ${PALETTE.paperDeep}` }}
+        >
+          <img src={photo.src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ViewLightbox({ photo, onClose }) {
+  if (!photo) return null;
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(15,20,30,0.92)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <img src={photo.src} alt="" style={{ maxWidth: "100%", maxHeight: "85vh", borderRadius: 10, objectFit: "contain" }} onClick={(e) => e.stopPropagation()} />
+    </div>
+  );
+}
+
+function GuestTripListScreen({ trips, onOpenTrip }) {
+  return (
+    <div style={{ padding: "20px 18px 90px" }}>
+      <h1 style={{ fontFamily: "'Fraunces', serif", fontWeight: 700, fontSize: 26, color: PALETTE.ink, margin: 0 }}>Cestovatelský deník</h1>
+      <p style={{ color: PALETTE.ink, opacity: 0.5, fontSize: 12.5, margin: "4px 0 12px" }}>Prohlížení — bez možnosti úprav</p>
+      <div style={{ background: PALETTE.cream, border: `1px solid ${PALETTE.paperDeep}`, borderRadius: 10, padding: "9px 12px", marginBottom: 20, fontSize: 11.5, color: PALETTE.teal, lineHeight: 1.4 }}>
+        Tento odkaz je jen pro tebe — prosím nepřeposílej ho dál nikomu jinému.
+      </div>
+      {trips.length === 0 ? (
+        <EmptyHint text="Zatím tu nejsou žádné výlety." />
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {trips.map((trip) => (
+            <button
+              key={trip.id}
+              onClick={() => onOpenTrip(trip.id)}
+              style={{ display: "flex", alignItems: "center", gap: 14, background: PALETTE.cream, border: `1px solid ${PALETTE.paperDeep}`, borderRadius: 16, padding: "14px 16px", textAlign: "left", cursor: "pointer" }}
+            >
+              <StampBadge label={trip.days.length > 0 ? `${trip.days.length}D` : "0D"} size={48} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontFamily: "'Fraunces', serif", fontWeight: 600, fontSize: 16, color: PALETTE.ink }}>{trip.name}</div>
+                <div style={{ fontSize: 12, color: PALETTE.ink, opacity: 0.5, marginTop: 2 }}>
+                  {formatRangeCz(trip.days[0]?.date, trip.days[trip.days.length - 1]?.date)}
+                </div>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function GuestTripScreen({ trip, photoCounts, onBack, onPlayAll, onPlayDay, onOpenFood, onOpenHighlights, onOpenPlaces }) {
+  return (
+    <div style={{ padding: "16px 18px 90px" }}>
+      <TopBar onBack={onBack} title={trip.name} />
+
+      <div style={{ background: PALETTE.cream, border: `1px solid ${PALETTE.paperDeep}`, borderRadius: 10, padding: "9px 12px", margin: "14px 0", fontSize: 11.5, color: PALETTE.teal, lineHeight: 1.4 }}>
+        Tento odkaz je jen pro tebe — prosím nepřeposílej ho dál nikomu jinému.
+      </div>
+
+      {trip.days.length > 0 && (
+        <button onClick={onPlayAll} style={{ ...btnAccent, width: "100%", marginBottom: 10 }}>
+          <Play size={15} style={{ marginRight: 6, verticalAlign: -2 }} fill={PALETTE.cream} /> Celková prezentace
+        </button>
+      )}
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+        <button onClick={onOpenFood} style={{ ...btnGhost, flex: 1, fontSize: 12.5, padding: "9px 0" }}>
+          <Utensils size={14} style={{ marginRight: 5, verticalAlign: -2 }} /> Jídlo
+        </button>
+        <button onClick={onOpenHighlights} style={{ ...btnGhost, flex: 1, fontSize: 12.5, padding: "9px 0" }}>
+          <Sparkles size={14} style={{ marginRight: 5, verticalAlign: -2 }} /> Zajímavosti
+        </button>
+        <button onClick={onOpenPlaces} style={{ ...btnGhost, flex: 1, fontSize: 12.5, padding: "9px 0" }}>
+          <Star size={14} style={{ marginRight: 5, verticalAlign: -2 }} /> Místa
+        </button>
+      </div>
+
+      {trip.days.length === 0 ? (
+        <EmptyHint text="Tenhle výlet zatím nemá žádné dny." />
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {trip.days.map((day, i) => (
+            <div
+              key={day.id}
+              style={{ background: PALETTE.cream, border: `1px solid ${PALETTE.paperDeep}`, borderRadius: 14, padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-between" }}
+            >
+              <div>
+                <div style={{ fontFamily: "'Fraunces', serif", fontWeight: 600, fontSize: 15.5, color: PALETTE.ink }}>{day.title || `Den ${i + 1}`}</div>
+                <div style={{ fontSize: 12, color: PALETTE.ink, opacity: 0.5 }}>
+                  {formatDateCz(day.date)} · {photoCounts[day.id] || 0} {(photoCounts[day.id] || 0) === 1 ? "fotka" : "fotek"}
+                </div>
+              </div>
+              <button
+                onClick={() => onPlayDay(day.id)}
+                aria-label="Přehrát prezentaci dne"
+                style={{ width: 32, height: 32, borderRadius: "50%", background: PALETTE.coral, border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}
+              >
+                <Play size={14} color="#fff" fill="#fff" style={{ marginLeft: 2 }} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function GuestEntriesScreen({ title, emptyText, entries, photosMap, onBack, renderReadRow }) {
+  const [viewerPhoto, setViewerPhoto] = useState(null);
+  return (
+    <div style={{ padding: "16px 18px 90px" }}>
+      <TopBar onBack={onBack} title={title} />
+      {entries.length === 0 ? (
+        <EmptyHint text={emptyText} />
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 16 }}>
+          {entries.map((item) => renderReadRow(item, photosMap[item.id] || [], setViewerPhoto))}
+        </div>
+      )}
+      <ViewLightbox photo={viewerPhoto} onClose={() => setViewerPhoto(null)} />
+    </div>
+  );
+}
+
+function GuestFavoritesScreen({ trip, favorites, onBack }) {
+  const resolvePoint = (pointId) => {
+    for (const day of trip.days) {
+      const p = day.points.find((pt) => pt.id === pointId);
+      if (p) return { point: p, day };
+    }
+    return null;
+  };
+  return (
+    <div style={{ padding: "16px 18px 90px" }}>
+      <TopBar onBack={onBack} title="Nejlepší místa" />
+      {favorites.length === 0 ? (
+        <EmptyHint text="Zatím žádná vybraná místa." />
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 16 }}>
+          {favorites.map((fav) => {
+            const resolved = resolvePoint(fav.pointId);
+            if (!resolved) return null;
+            const { point, day } = resolved;
+            return (
+              <div key={fav.id} style={{ background: PALETTE.cream, border: `1px solid ${PALETTE.paperDeep}`, borderRadius: 12, padding: 12 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  {point.kind === "route" ? React.createElement(TRANSPORT_ICONS[point.transport] || RouteIcon, { size: 16, color: PALETTE.coral }) : <MapPin size={16} color={PALETTE.coral} />}
+                  <div style={{ fontWeight: 600, fontSize: 14.5, color: PALETTE.ink }}>
+                    {point.kind === "route" ? `${point.label || "Odkud"} → ${point.toLabel || "Kam"}` : (point.label || "Zastávka")}
+                  </div>
+                </div>
+                <div style={{ fontSize: 11.5, color: PALETTE.teal, marginTop: 2 }}>{day.title || formatDateCz(day.date)}</div>
+                {fav.note && <div style={{ fontSize: 13, color: PALETTE.ink, opacity: 0.8, marginTop: 6, lineHeight: 1.5 }}>{fav.note}</div>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // -------------------- Presentation mode -----------------------------------
 
 function buildSlides(trip, allPhotos) {
@@ -1164,7 +1375,7 @@ function buildSlides(trip, allPhotos) {
   return slides;
 }
 
-function PresentationScreen({ trip, allPhotos, onExit, spotifyUrl, onSetSpotifyUrl }) {
+function PresentationScreen({ trip, allPhotos, onExit, spotifyUrl, onSetSpotifyUrl, readOnly = false }) {
   const slides = useMemo(() => buildSlides(trip, allPhotos), [trip, allPhotos]);
   const [idx, setIdx] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -1214,7 +1425,7 @@ function PresentationScreen({ trip, allPhotos, onExit, spotifyUrl, onSetSpotifyU
   const openSpotify = () => {
     if (spotifyUrl) {
       window.open(spotifyUrl, "_blank");
-    } else {
+    } else if (!readOnly) {
       const url = window.prompt("Vlož odkaz na svůj Spotify playlist:");
       if (url && url.trim()) {
         onSetSpotifyUrl(url.trim());
@@ -1315,9 +1526,11 @@ function PresentationScreen({ trip, allPhotos, onExit, spotifyUrl, onSetSpotifyU
         {spotifyUrl && (
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 10, fontSize: 11, opacity: 0.6 }}>
             <span>🎧 Spotify playlist nastaven</span>
-            <button onClick={editSpotify} style={{ background: "none", border: "none", color: PALETTE.cream, opacity: 0.7, cursor: "pointer", padding: 2 }}>
-              <Pencil size={11} />
-            </button>
+            {!readOnly && (
+              <button onClick={editSpotify} style={{ background: "none", border: "none", color: PALETTE.cream, opacity: 0.7, cursor: "pointer", padding: 2 }}>
+                <Pencil size={11} />
+              </button>
+            )}
           </div>
         )}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 22 }}>
@@ -1362,78 +1575,120 @@ const iconBtnDark = { border: "none", background: "rgba(244,239,227,0.12)", colo
 // -------------------- Root app ---------------------------------------------
 
 export default function CestovatelskyDenik() {
+  const isGuest = useMemo(() => {
+    try {
+      return new URLSearchParams(window.location.search).get("guest") === "1";
+    } catch {
+      return false;
+    }
+  }, []);
   const [trips, setTrips] = useState([]);
   const [dayPhotos, setDayPhotos] = useState({});
   const [restaurantPhotos, setRestaurantPhotos] = useState({});
   const [highlightPhotos, setHighlightPhotos] = useState({});
   const [loaded, setLoaded] = useState(false);
-  const [view, setView] = useState({ screen: "list" });
+  const [view, setView] = useState(() => {
+    if (!isGuest) return { screen: "list" };
+    try {
+      const sharedTripId = new URLSearchParams(window.location.search).get("trip");
+      if (sharedTripId) return { screen: "guest-trip", tripId: sharedTripId };
+    } catch {
+      // ignoruj
+    }
+    return { screen: "guest-list" };
+  });
   const [dbStatus, setDbStatus] = useState("loading"); // loading | ok | error
   const [dbError, setDbError] = useState(null);
   const [lastSavedAt, setLastSavedAt] = useState(null);
 
-  // Načtení všech dat z databáze při startu (spojíme 4 tabulky do stromu v paměti).
-  useEffect(() => {
-    (async () => {
-      try {
-        const [tripsRows, daysRows, pointsRows, photosRows, restaurantsRows, restaurantPhotosRows, highlightsRows, highlightPhotosRows, favoritesRows] = await Promise.all([
-          sb("trips?select=*&order=created_at.asc"),
-          sb("days?select=*&order=created_at.asc"),
-          sb("points?select=*&order=position.asc"),
-          sb("photos?select=*&order=created_at.asc"),
-          sb("restaurants?select=*&order=position.asc"),
-          sb("restaurant_photos?select=*&order=created_at.asc"),
-          sb("highlights?select=*&order=position.asc"),
-          sb("highlight_photos?select=*&order=created_at.asc"),
-          sb("favorites?select=*&order=position.asc"),
-        ]);
-        const assembled = tripsRows.map((t) => ({
-          id: t.id,
-          name: t.name,
-          spotifyUrl: t.spotify_url || "",
-          days: daysRows
-            .filter((d) => d.trip_id === t.id)
-            .map((d) => ({
-              id: d.id,
-              title: d.title || "",
-              date: d.date || "",
-              points: pointsRows
-                .filter((p) => p.day_id === d.id)
-                .map((p) => ({
-                  id: p.id, lat: p.lat, lng: p.lng, label: p.label || "",
-                  kind: p.kind || "stop", note: p.note || "", transport: p.transport || null,
-                  toLat: p.to_lat ?? null, toLng: p.to_lng ?? null, toLabel: p.to_label || "",
-                })),
-            })),
-          restaurants: restaurantsRows.filter((r) => r.trip_id === t.id).map((r) => ({ id: r.id, name: r.name || "", address: r.address || "", note: r.note || "" })),
-          highlights: highlightsRows.filter((h) => h.trip_id === t.id).map((h) => ({ id: h.id, title: h.title || "", note: h.note || "" })),
-          favorites: favoritesRows.filter((f) => f.trip_id === t.id).map((f) => ({ id: f.id, pointId: f.point_id, note: f.note || "" })),
-        }));
-        const photosMap = {};
-        for (const ph of photosRows) {
-          (photosMap[ph.day_id] ||= []).push({ id: ph.id, src: ph.src, pointId: ph.point_id });
-        }
-        const restaurantPhotosMap = {};
-        for (const ph of restaurantPhotosRows) {
-          (restaurantPhotosMap[ph.restaurant_id] ||= []).push({ id: ph.id, src: ph.src });
-        }
-        const highlightPhotosMap = {};
-        for (const ph of highlightPhotosRows) {
-          (highlightPhotosMap[ph.highlight_id] ||= []).push({ id: ph.id, src: ph.src });
-        }
-        setTrips(assembled);
-        setDayPhotos(photosMap);
-        setRestaurantPhotos(restaurantPhotosMap);
-        setHighlightPhotos(highlightPhotosMap);
-        setDbStatus("ok");
-        setDbError(null);
-      } catch (err) {
-        console.error("Načtení z databáze selhalo:", err);
-        setDbStatus("error");
-        setDbError(String(err.message || err));
+  // Načtení všech dat z databáze (spojíme 4 tabulky do stromu v paměti).
+  // Použije se při startu i pro ruční obnovení (více lidí může upravovat souběžně).
+  const loadAllData = useCallback(async () => {
+    try {
+      const [tripsRows, daysRows, pointsRows, photosRows, restaurantsRows, restaurantPhotosRows, highlightsRows, highlightPhotosRows, favoritesRows] = await Promise.all([
+        sb("trips?select=*&order=created_at.asc"),
+        sb("days?select=*&order=created_at.asc"),
+        sb("points?select=*&order=position.asc"),
+        sb("photos?select=*&order=created_at.asc"),
+        sb("restaurants?select=*&order=position.asc"),
+        sb("restaurant_photos?select=*&order=created_at.asc"),
+        sb("highlights?select=*&order=position.asc"),
+        sb("highlight_photos?select=*&order=created_at.asc"),
+        sb("favorites?select=*&order=position.asc"),
+      ]);
+      const assembled = tripsRows.map((t) => ({
+        id: t.id,
+        name: t.name,
+        spotifyUrl: t.spotify_url || "",
+        days: daysRows
+          .filter((d) => d.trip_id === t.id)
+          .map((d) => ({
+            id: d.id,
+            title: d.title || "",
+            date: d.date || "",
+            points: pointsRows
+              .filter((p) => p.day_id === d.id)
+              .map((p) => ({
+                id: p.id, lat: p.lat, lng: p.lng, label: p.label || "",
+                kind: p.kind || "stop", note: p.note || "", transport: p.transport || null,
+                toLat: p.to_lat ?? null, toLng: p.to_lng ?? null, toLabel: p.to_label || "",
+              })),
+          }))
+          .sort((a, b) => (a.date || "").localeCompare(b.date || "")),
+        restaurants: restaurantsRows.filter((r) => r.trip_id === t.id).map((r) => ({ id: r.id, name: r.name || "", address: r.address || "", note: r.note || "" })),
+        highlights: highlightsRows.filter((h) => h.trip_id === t.id).map((h) => ({ id: h.id, title: h.title || "", note: h.note || "" })),
+        favorites: favoritesRows.filter((f) => f.trip_id === t.id).map((f) => ({ id: f.id, pointId: f.point_id, note: f.note || "" })),
+      }));
+      const photosMap = {};
+      for (const ph of photosRows) {
+        (photosMap[ph.day_id] ||= []).push({ id: ph.id, src: ph.src, pointId: ph.point_id });
       }
-      setLoaded(true);
-    })();
+      const restaurantPhotosMap = {};
+      for (const ph of restaurantPhotosRows) {
+        (restaurantPhotosMap[ph.restaurant_id] ||= []).push({ id: ph.id, src: ph.src });
+      }
+      const highlightPhotosMap = {};
+      for (const ph of highlightPhotosRows) {
+        (highlightPhotosMap[ph.highlight_id] ||= []).push({ id: ph.id, src: ph.src });
+      }
+      setTrips(assembled);
+      setDayPhotos(photosMap);
+      setRestaurantPhotos(restaurantPhotosMap);
+      setHighlightPhotos(highlightPhotosMap);
+      setDbStatus("ok");
+      setDbError(null);
+    } catch (err) {
+      console.error("Načtení z databáze selhalo:", err);
+      setDbStatus("error");
+      setDbError(String(err.message || err));
+    }
+    setLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    loadAllData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Realtime: kdykoliv kdokoliv (i na jiném telefonu) něco změní v databázi,
+  // appka si během chvilky sama natáhne čerstvá data — žádné ruční obnovování.
+  useEffect(() => {
+    let debounceTimer = null;
+    const scheduleReload = () => {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => { loadAllData(); }, 400);
+    };
+    const tables = ["trips", "days", "points", "photos", "restaurants", "restaurant_photos", "highlights", "highlight_photos", "favorites"];
+    const channel = supabaseClient.channel("cd-realtime");
+    tables.forEach((table) => {
+      channel.on("postgres_changes", { event: "*", schema: "public", table }, scheduleReload);
+    });
+    channel.subscribe();
+    return () => {
+      clearTimeout(debounceTimer);
+      supabaseClient.removeChannel(channel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const withSave = useCallback(async (fn) => {
@@ -1478,13 +1733,22 @@ export default function CestovatelskyDenik() {
   const addDay = (tripId) => {
     const id = uid();
     const day = { id, title: "", date: todayISO(), points: [] };
-    setTrips((prev) => prev.map((t) => (t.id === tripId ? { ...t, days: [...t.days, day] } : t)));
+    setTrips((prev) => prev.map((t) => {
+      if (t.id !== tripId) return t;
+      const sorted = [...t.days, day].sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+      return { ...t, days: sorted };
+    }));
     setView({ screen: "day", tripId, dayId: id });
     withSave(() => sb("days", { method: "POST", body: JSON.stringify({ id, trip_id: tripId, title: "", date: day.date }) }));
   };
 
   const updateDay = (tripId, dayId, patch) => {
-    setTrips((prev) => prev.map((t) => t.id !== tripId ? t : { ...t, days: t.days.map((d) => d.id === dayId ? { ...d, ...patch } : d) }));
+    setTrips((prev) => prev.map((t) => {
+      if (t.id !== tripId) return t;
+      let days = t.days.map((d) => d.id === dayId ? { ...d, ...patch } : d);
+      if ("date" in patch) days = [...days].sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+      return { ...t, days };
+    }));
     withSave(() => sb(`days?id=eq.${dayId}`, { method: "PATCH", body: JSON.stringify(patch) }));
   };
 
@@ -1677,6 +1941,73 @@ export default function CestovatelskyDenik() {
 
       {!loaded ? (
         <div style={{ padding: 40, textAlign: "center", color: PALETTE.ink, opacity: 0.5 }}>Načítám deník…</div>
+      ) : isGuest ? (
+        view.screen === "guest-list" ? (
+          <GuestTripListScreen trips={trips} onOpenTrip={(id) => setView({ screen: "guest-trip", tripId: id })} />
+        ) : view.screen === "guest-trip" && currentTrip ? (
+          <GuestTripScreen
+            trip={currentTrip}
+            photoCounts={photoCounts}
+            onBack={() => setView({ screen: "guest-list" })}
+            onPlayAll={() => setView({ screen: "presentation", tripId: currentTrip.id })}
+            onPlayDay={(dayId) => setView({ screen: "presentation", tripId: currentTrip.id, dayId })}
+            onOpenFood={() => setView({ screen: "guest-food", tripId: currentTrip.id })}
+            onOpenHighlights={() => setView({ screen: "guest-highlights", tripId: currentTrip.id })}
+            onOpenPlaces={() => setView({ screen: "guest-places", tripId: currentTrip.id })}
+          />
+        ) : view.screen === "guest-food" && currentTrip ? (
+          <GuestEntriesScreen
+            title="Jídlo"
+            emptyText="Zatím žádná restaurace."
+            entries={currentTrip.restaurants}
+            photosMap={restaurantPhotos}
+            onBack={() => setView({ screen: "guest-trip", tripId: currentTrip.id })}
+            renderReadRow={(item, photos, openViewer) => (
+              <div key={item.id} style={{ background: PALETTE.cream, border: `1px solid ${PALETTE.paperDeep}`, borderRadius: 12, padding: 12 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <Utensils size={16} color={PALETTE.coral} />
+                  <div style={{ fontWeight: 600, fontSize: 15, color: PALETTE.ink }}>{item.name || "Bez názvu"}</div>
+                </div>
+                {item.address && <div style={{ fontSize: 12.5, color: PALETTE.teal, marginTop: 4 }}>{item.address}</div>}
+                {item.note && <div style={{ fontSize: 13, color: PALETTE.ink, opacity: 0.8, marginTop: 6, lineHeight: 1.5 }}>{item.note}</div>}
+                <ViewPhotoGrid photos={photos} onOpen={openViewer} />
+              </div>
+            )}
+          />
+        ) : view.screen === "guest-highlights" && currentTrip ? (
+          <GuestEntriesScreen
+            title="Zajímavosti"
+            emptyText="Zatím žádná zajímavost."
+            entries={currentTrip.highlights}
+            photosMap={highlightPhotos}
+            onBack={() => setView({ screen: "guest-trip", tripId: currentTrip.id })}
+            renderReadRow={(item, photos, openViewer) => (
+              <div key={item.id} style={{ background: PALETTE.cream, border: `1px solid ${PALETTE.paperDeep}`, borderRadius: 12, padding: 12 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <Sparkles size={16} color={PALETTE.gold} />
+                  <div style={{ fontWeight: 600, fontSize: 15, color: PALETTE.ink }}>{item.title || "Bez názvu"}</div>
+                </div>
+                {item.note && <div style={{ fontSize: 13, color: PALETTE.ink, opacity: 0.8, marginTop: 6, lineHeight: 1.5 }}>{item.note}</div>}
+                <ViewPhotoGrid photos={photos} onOpen={openViewer} />
+              </div>
+            )}
+          />
+        ) : view.screen === "guest-places" && currentTrip ? (
+          <GuestFavoritesScreen trip={currentTrip} favorites={currentTrip.favorites} onBack={() => setView({ screen: "guest-trip", tripId: currentTrip.id })} />
+        ) : view.screen === "presentation" && currentTrip ? (
+          <PresentationScreen
+            trip={view.dayId ? { ...currentTrip, days: currentTrip.days.filter((d) => d.id === view.dayId) } : currentTrip}
+            allPhotos={dayPhotos}
+            onExit={() => setView({ screen: "guest-trip", tripId: currentTrip.id })}
+            spotifyUrl={currentTrip.spotifyUrl}
+            onSetSpotifyUrl={() => {}}
+            readOnly
+          />
+        ) : (
+          <div style={{ padding: 40, textAlign: "center" }}>
+            <button onClick={() => setView({ screen: "guest-list" })} style={btnPrimary}>Zpět na seznam</button>
+          </div>
+        )
       ) : view.screen === "list" ? (
         <TripListScreen
           trips={trips}
@@ -1685,6 +2016,7 @@ export default function CestovatelskyDenik() {
           dbStatus={dbStatus}
           dbError={dbError}
           lastSavedAt={lastSavedAt}
+          onRefresh={loadAllData}
         />
       ) : view.screen === "trip" && currentTrip ? (
         <TripDetailScreen
