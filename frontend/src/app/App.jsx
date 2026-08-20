@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import {
   Plus, ChevronLeft, Camera, X, Play, Pause, MapPin,
   SkipBack, SkipForward, Music, Trash2, Calendar, Search, Loader2, Route as RouteIcon,
-  Plane, Car, Bike, Footprints, Ship, ChevronUp, ChevronDown, Utensils, Sparkles, Star
+  Plane, Car, Bike, Footprints, Ship, ChevronUp, ChevronDown, Utensils, Sparkles, Star,
+  ExternalLink, Pencil
 } from "lucide-react";
 
 // ---------------------------------------------------------------------
@@ -1163,7 +1164,7 @@ function buildSlides(trip, allPhotos) {
   return slides;
 }
 
-function PresentationScreen({ trip, allPhotos, onExit }) {
+function PresentationScreen({ trip, allPhotos, onExit, spotifyUrl, onSetSpotifyUrl }) {
   const slides = useMemo(() => buildSlides(trip, allPhotos), [trip, allPhotos]);
   const [idx, setIdx] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -1210,6 +1211,23 @@ function PresentationScreen({ trip, allPhotos, onExit }) {
     }
   };
 
+  const openSpotify = () => {
+    if (spotifyUrl) {
+      window.open(spotifyUrl, "_blank");
+    } else {
+      const url = window.prompt("Vlož odkaz na svůj Spotify playlist:");
+      if (url && url.trim()) {
+        onSetSpotifyUrl(url.trim());
+        window.open(url.trim(), "_blank");
+      }
+    }
+  };
+
+  const editSpotify = () => {
+    const url = window.prompt("Upravit odkaz na Spotify playlist (prázdné = smazat):", spotifyUrl || "");
+    if (url !== null) onSetSpotifyUrl(url.trim());
+  };
+
   const step = (delta) => setIdx((i) => Math.min(slides.length - 1, Math.max(0, i + delta)));
 
   if (!slide || !day) {
@@ -1232,7 +1250,12 @@ function PresentationScreen({ trip, allPhotos, onExit }) {
           <div style={{ fontFamily: "'Fraunces', serif", fontSize: 14, opacity: 0.85 }}>{trip.name}</div>
           <div style={{ fontSize: 11, opacity: 0.55 }}>Den {dayIndex + 1} z {trip.days.length}</div>
         </div>
-        <button onClick={() => musicInputRef.current?.click()} style={iconBtnDark}><Music size={18} /></button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={openSpotify} style={{ ...iconBtnDark, background: "rgba(29,185,84,0.18)" }} title="Otevřít Spotify playlist">
+            <ExternalLink size={16} color="#1DB954" />
+          </button>
+          <button onClick={() => musicInputRef.current?.click()} style={iconBtnDark}><Music size={18} /></button>
+        </div>
       </div>
       <input ref={musicInputRef} type="file" accept="audio/*" onChange={pickMusic} style={{ display: "none" }} />
 
@@ -1288,7 +1311,15 @@ function PresentationScreen({ trip, allPhotos, onExit }) {
       </div>
 
       <div style={{ padding: "10px 20px 26px" }}>
-        {musicName && <div style={{ fontSize: 11, opacity: 0.5, textAlign: "center", marginBottom: 10 }}>♪ {musicName}</div>}
+        {musicName && <div style={{ fontSize: 11, opacity: 0.5, textAlign: "center", marginBottom: 6 }}>♪ {musicName}</div>}
+        {spotifyUrl && (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 10, fontSize: 11, opacity: 0.6 }}>
+            <span>🎧 Spotify playlist nastaven</span>
+            <button onClick={editSpotify} style={{ background: "none", border: "none", color: PALETTE.cream, opacity: 0.7, cursor: "pointer", padding: 2 }}>
+              <Pencil size={11} />
+            </button>
+          </div>
+        )}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 22 }}>
           <button onClick={() => step(-1)} disabled={idx === 0} style={iconBtnDark}><SkipBack size={20} /></button>
           <button onClick={togglePlay} style={{ width: 58, height: 58, borderRadius: "50%", background: PALETTE.coral, border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
@@ -1359,6 +1390,7 @@ export default function CestovatelskyDenik() {
         const assembled = tripsRows.map((t) => ({
           id: t.id,
           name: t.name,
+          spotifyUrl: t.spotify_url || "",
           days: daysRows
             .filter((d) => d.trip_id === t.id)
             .map((d) => ({
@@ -1428,8 +1460,13 @@ export default function CestovatelskyDenik() {
 
   const createTrip = (name) => {
     const id = uid();
-    setTrips((prev) => [{ id, name, days: [], restaurants: [], highlights: [], favorites: [] }, ...prev]);
+    setTrips((prev) => [{ id, name, spotifyUrl: "", days: [], restaurants: [], highlights: [], favorites: [] }, ...prev]);
     withSave(() => sb("trips", { method: "POST", body: JSON.stringify({ id, name }) }));
+  };
+
+  const updateTripSpotify = (tripId, spotifyUrl) => {
+    setTrips((prev) => prev.map((t) => t.id !== tripId ? t : { ...t, spotifyUrl }));
+    withSave(() => sb(`trips?id=eq.${tripId}`, { method: "PATCH", body: JSON.stringify({ spotify_url: spotifyUrl || null }) }));
   };
 
   const deleteTrip = (tripId) => {
@@ -1739,6 +1776,8 @@ export default function CestovatelskyDenik() {
           trip={view.dayId ? { ...currentTrip, days: currentTrip.days.filter((d) => d.id === view.dayId) } : currentTrip}
           allPhotos={dayPhotos}
           onExit={() => setView({ screen: "trip", tripId: currentTrip.id })}
+          spotifyUrl={currentTrip.spotifyUrl}
+          onSetSpotifyUrl={(url) => updateTripSpotify(currentTrip.id, url)}
         />
       ) : (
         <div style={{ padding: 40, textAlign: "center" }}>
