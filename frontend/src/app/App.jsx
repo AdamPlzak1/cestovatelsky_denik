@@ -56,6 +56,19 @@ async function sb(path, options = {}) {
 // Klient jen pro realtime odběr změn (CRUD operace jedou přes sb() výše).
 const supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+// Lokální "upsert"/"remove" pro pole podle id — používá se při zpracování
+// realtime zpráv, ať appka nemusí po každé změně nic znovu stahovat.
+function upsertById(arr, item) {
+  const idx = arr.findIndex((x) => x.id === item.id);
+  if (idx === -1) return [...arr, item];
+  const next = [...arr];
+  next[idx] = { ...next[idx], ...item };
+  return next;
+}
+function removeById(arr, id) {
+  return arr.filter((x) => x.id !== id);
+}
+
 function uid() {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 }
@@ -1632,6 +1645,7 @@ export default function CestovatelskyDenik() {
                 id: p.id, lat: p.lat, lng: p.lng, label: p.label || "",
                 kind: p.kind || "stop", note: p.note || "", transport: p.transport || null,
                 toLat: p.to_lat ?? null, toLng: p.to_lng ?? null, toLabel: p.to_label || "",
+                position: p.position ?? 0,
               })),
           }))
           .sort((a, b) => (a.date || "").localeCompare(b.date || "")),
@@ -1670,22 +1684,137 @@ export default function CestovatelskyDenik() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Realtime: kdykoliv kdokoliv (i na jiném telefonu) něco změní v databázi,
-  // appka si během chvilky sama natáhne čerstvá data — žádné ruční obnovování.
+  // Realtime: appka poslouchá databázi na "živo", ale NIC si znovu nestahuje —
+  // data ke změně přijdou rovnou v realtime zprávě a appka si jen upraví
+  // svůj lokální strom. Šetří to Disk IO limit Supabase (žádné opakované
+  // dotazy po každé jednotlivé úpravě).
   useEffect(() => {
-    let debounceTimer = null;
-    const scheduleReload = () => {
-      clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => { loadAllData(); }, 400);
-    };
-    const tables = ["trips", "days", "points", "photos", "restaurants", "restaurant_photos", "highlights", "highlight_photos", "favorites"];
-    const channel = supabaseClient.channel("cd-realtime");
-    tables.forEach((table) => {
-      channel.on("postgres_changes", { event: "*", schema: "public", table }, scheduleReload);
+    const mapPoint = (row) => ({
+      id: row.id, lat: row.lat, lng: row.lng, label: row.label || "",
+      kind: row.kind || "stop", note: row.note || "", transport: row.transport || null,
+      toLat: row.to_lat ?? null, toLng: row.to_lng ?? null, toLabel: row.to_label || "",
+      position: row.position ?? 0,
     });
-    channel.subscribe();
+    const sortPoints = (pts) => [...pts].sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+    const sortDays = (days) => [...days].sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+
+    const onTrips = ({ eventType, new: n, old: o }) => {
+      setTrips((prev) => {
+        if (eventType === "DELETE") return removeById(prev, o.id);
+        const idx = prev.findIndex((t) => t.id === n.id);
+        if (idx === -1) return [...prev, { id: n.id, name: n.name, spotifyUrl: n.spotify_url || "", days: [], restaurants: [], highlights: [], favorites: [] }];
+        const next = [...prev];
+        next[idx] = { ...next[idx], name: n.name, spotifyUrl: n.spotify_url || "" };
+        return next;
+      });
+    };
+
+    const onDays = ({ eventType, new: n, old: o }) => {
+      setTrips((prev) => prev.map((t) => {
+        if (eventType === "DELETE") {
+          if (!t.days.some((d) => d.id === o.id)) return t;
+          return { ...t, days: t.days.filter((d) => d.id !== o.id) };
+        }
+        if (t.id !== n.trip_id) return t;
+        const existing = t.days.find((d) => d.id === n.id);
+        const mapped = { id: n.id, title: n.title || "", date: n.date || "", points: existing?.points || [] };
+        return { ...t, days: sortDays(upsertById(t.days, mapped)) };
+      }));
+    };
+
+    const onPoints = ({ eventType, new: n, old: o }) => {
+      const dayId = eventType === "DELETE" ? o.day_id : n.day_id;
+      const pointId = eventType === "DELETE" ? o.id : n.id;
+      setTrips((prev) => prev.map((t) => {
+        const dIdx = t.days.findIndex((d) => d.id === dayId);
+        if (dIdx === -1) return t;
+        const day = t.days[dIdx];
+        const points = eventType === "DELETE" ? removeById(day.points, pointId) : sortPoints(upsertById(day.points, mapPoint(n)));
+        const days = [...t.days];
+        days[dIdx] = { ...day, points };
+        return { ...t, days };
+      }));
+      if (eventType === "DELETE") {
+        setDayPhotos((prev) => ({ ...prev, [dayId]: (prev[dayId] || []).map((ph) => (ph.pointId === pointId ? { ...ph, pointId: null } : ph)) }));
+      }
+    };
+
+    const onPhotos = ({ eventType, new: n, old: o }) => {
+      const dayId = eventType === "DELETE" ? o.day_id : n.day_id;
+      setDayPhotos((prev) => {
+        const list = prev[dayId] || [];
+        const next = eventType === "DELETE" ? removeById(list, o.id) : upsertById(list, { id: n.id, src: n.src, pointId: n.point_id });
+        return { ...prev, [dayId]: next };
+      });
+    };
+
+    const onRestaurants = ({ eventType, new: n, old: o }) => {
+      setTrips((prev) => prev.map((t) => {
+        if (eventType === "DELETE") {
+          if (!t.restaurants.some((r) => r.id === o.id)) return t;
+          return { ...t, restaurants: removeById(t.restaurants, o.id) };
+        }
+        if (t.id !== n.trip_id) return t;
+        return { ...t, restaurants: upsertById(t.restaurants, { id: n.id, name: n.name || "", address: n.address || "", note: n.note || "" }) };
+      }));
+      if (eventType === "DELETE") setRestaurantPhotos((prev) => { const next = { ...prev }; delete next[o.id]; return next; });
+    };
+
+    const onRestaurantPhotos = ({ eventType, new: n, old: o }) => {
+      const rid = eventType === "DELETE" ? o.restaurant_id : n.restaurant_id;
+      setRestaurantPhotos((prev) => {
+        const list = prev[rid] || [];
+        const next = eventType === "DELETE" ? removeById(list, o.id) : upsertById(list, { id: n.id, src: n.src });
+        return { ...prev, [rid]: next };
+      });
+    };
+
+    const onHighlights = ({ eventType, new: n, old: o }) => {
+      setTrips((prev) => prev.map((t) => {
+        if (eventType === "DELETE") {
+          if (!t.highlights.some((h) => h.id === o.id)) return t;
+          return { ...t, highlights: removeById(t.highlights, o.id) };
+        }
+        if (t.id !== n.trip_id) return t;
+        return { ...t, highlights: upsertById(t.highlights, { id: n.id, title: n.title || "", note: n.note || "" }) };
+      }));
+      if (eventType === "DELETE") setHighlightPhotos((prev) => { const next = { ...prev }; delete next[o.id]; return next; });
+    };
+
+    const onHighlightPhotos = ({ eventType, new: n, old: o }) => {
+      const hid = eventType === "DELETE" ? o.highlight_id : n.highlight_id;
+      setHighlightPhotos((prev) => {
+        const list = prev[hid] || [];
+        const next = eventType === "DELETE" ? removeById(list, o.id) : upsertById(list, { id: n.id, src: n.src });
+        return { ...prev, [hid]: next };
+      });
+    };
+
+    const onFavorites = ({ eventType, new: n, old: o }) => {
+      setTrips((prev) => prev.map((t) => {
+        if (eventType === "DELETE") {
+          if (!t.favorites.some((f) => f.id === o.id)) return t;
+          return { ...t, favorites: removeById(t.favorites, o.id) };
+        }
+        if (t.id !== n.trip_id) return t;
+        return { ...t, favorites: upsertById(t.favorites, { id: n.id, pointId: n.point_id, note: n.note || "" }) };
+      }));
+    };
+
+    const channel = supabaseClient
+      .channel("cd-realtime")
+      .on("postgres_changes", { event: "*", schema: "public", table: "trips" }, onTrips)
+      .on("postgres_changes", { event: "*", schema: "public", table: "days" }, onDays)
+      .on("postgres_changes", { event: "*", schema: "public", table: "points" }, onPoints)
+      .on("postgres_changes", { event: "*", schema: "public", table: "photos" }, onPhotos)
+      .on("postgres_changes", { event: "*", schema: "public", table: "restaurants" }, onRestaurants)
+      .on("postgres_changes", { event: "*", schema: "public", table: "restaurant_photos" }, onRestaurantPhotos)
+      .on("postgres_changes", { event: "*", schema: "public", table: "highlights" }, onHighlights)
+      .on("postgres_changes", { event: "*", schema: "public", table: "highlight_photos" }, onHighlightPhotos)
+      .on("postgres_changes", { event: "*", schema: "public", table: "favorites" }, onFavorites)
+      .subscribe();
+
     return () => {
-      clearTimeout(debounceTimer);
       supabaseClient.removeChannel(channel);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1755,12 +1884,12 @@ export default function CestovatelskyDenik() {
   const addItem = (tripId, dayId, { kind, lat, lng, label, toLat, toLng, toLabel, transport }) => {
     const id = uid();
     let position = 0;
-    const item = { id, kind: kind || "stop", lat, lng, label: label || "", toLat: toLat ?? null, toLng: toLng ?? null, toLabel: toLabel || "", transport: transport || (kind === "route" ? "car" : null) };
     setTrips((prev) => prev.map((t) => {
       if (t.id !== tripId) return t;
       return { ...t, days: t.days.map((d) => {
         if (d.id !== dayId) return d;
         position = d.points.length;
+        const item = { id, kind: kind || "stop", lat, lng, label: label || "", toLat: toLat ?? null, toLng: toLng ?? null, toLabel: toLabel || "", transport: transport || (kind === "route" ? "car" : null), position };
         return { ...d, points: [...d.points, item] };
       }) };
     }));
@@ -1769,7 +1898,7 @@ export default function CestovatelskyDenik() {
       body: JSON.stringify({
         id, day_id: dayId, lat, lng, label: label || "", kind: kind || "stop", position,
         to_lat: toLat ?? null, to_lng: toLng ?? null, to_label: toLabel || null,
-        transport: item.transport,
+        transport: transport || (kind === "route" ? "car" : null),
       }),
     }));
   };
@@ -1809,11 +1938,12 @@ export default function CestovatelskyDenik() {
   };
 
   const reorderItems = (tripId, dayId, orderedPoints) => {
+    const withPositions = orderedPoints.map((p, idx) => ({ ...p, position: idx }));
     setTrips((prev) => prev.map((t) => t.id !== tripId ? t : {
-      ...t, days: t.days.map((d) => d.id !== dayId ? d : { ...d, points: orderedPoints }),
+      ...t, days: t.days.map((d) => d.id !== dayId ? d : { ...d, points: withPositions }),
     }));
-    orderedPoints.forEach((p, idx) => {
-      withSave(() => sb(`points?id=eq.${p.id}`, { method: "PATCH", body: JSON.stringify({ position: idx }) }));
+    withPositions.forEach((p) => {
+      withSave(() => sb(`points?id=eq.${p.id}`, { method: "PATCH", body: JSON.stringify({ position: p.position }) }));
     });
   };
 
