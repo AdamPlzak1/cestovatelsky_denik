@@ -53,6 +53,41 @@ async function sb(path, options = {}) {
   return text ? JSON.parse(text) : null;
 }
 
+const STORAGE_BUCKET = "trip-photos";
+
+// Nahraje fotku (Blob) do Supabase Storage a vrátí veřejnou URL. V databázi
+// se pak ukládá jen tahle krátká URL, ne obsah fotky — šetří to přenos dat
+// (Egress) při každém načtení i realtime aktualizaci.
+async function uploadPhotoBlob(blob, path) {
+  const res = await fetch(`${SUPABASE_URL}/storage/v1/object/${STORAGE_BUCKET}/${path}`, {
+    method: "POST",
+    headers: {
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      "Content-Type": blob.type || "image/jpeg",
+      "x-upsert": "true",
+    },
+    body: blob,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Nahrání fotky selhalo: ${res.status} ${text}`);
+  }
+  return `${SUPABASE_URL}/storage/v1/object/public/${STORAGE_BUCKET}/${path}`;
+}
+
+// Nejlepší snaha o smazání souboru ze Storage (nekritické — pokud selže,
+// jen zůstane osamocený soubor, appka na to nijak nezávisí).
+function deletePhotoFromStorage(url) {
+  const prefix = `${SUPABASE_URL}/storage/v1/object/public/${STORAGE_BUCKET}/`;
+  if (!url || !url.startsWith(prefix)) return;
+  const path = url.slice(prefix.length);
+  fetch(`${SUPABASE_URL}/storage/v1/object/${STORAGE_BUCKET}/${path}`, {
+    method: "DELETE",
+    headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
+  }).catch(() => {});
+}
+
 // Klient jen pro realtime odběr změn (CRUD operace jedou přes sb() výše).
 const supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -89,7 +124,8 @@ function formatRangeCz(startISO, endISO) {
   return `${formatDateCz(startISO)} – ${formatDateCz(endISO)}`;
 }
 
-// Zmenší a zkomprimuje fotku na rozumnou velikost před uložením.
+// Zmenší a zkomprimuje fotku na rozumnou velikost a vrátí ji jako Blob
+// (nahraje se do Supabase Storage — v databázi zůstává jen krátký odkaz).
 function compressImage(file, maxDim = 1000, quality = 0.72) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -109,7 +145,7 @@ function compressImage(file, maxDim = 1000, quality = 0.72) {
         canvas.height = height;
         const ctx = canvas.getContext("2d");
         ctx.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL("image/jpeg", quality));
+        canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("toBlob selhalo"))), "image/jpeg", quality);
       };
       img.onerror = reject;
       img.src = reader.result;
@@ -1970,13 +2006,17 @@ export default function CestovatelskyDenik() {
     withSave(() => sb(`restaurants?id=eq.${id}`, { method: "DELETE", prefer: "return=minimal" }));
   };
 
-  const addRestaurantPhoto = async (restaurantId, src) => {
-    const photo = { id: uid(), src };
+  const addRestaurantPhoto = async (restaurantId, blob) => {
+    const id = uid();
+    const src = await uploadPhotoBlob(blob, `restaurants/${restaurantId}/${id}.jpg`);
+    const photo = { id, src };
     setRestaurantPhotos((prev) => ({ ...prev, [restaurantId]: [...(prev[restaurantId] || []), photo] }));
-    await withSave(() => sb("restaurant_photos", { method: "POST", body: JSON.stringify([{ id: photo.id, restaurant_id: restaurantId, src }]) }));
+    await withSave(() => sb("restaurant_photos", { method: "POST", body: JSON.stringify([{ id, restaurant_id: restaurantId, src }]) }));
   };
 
   const removeRestaurantPhoto = (restaurantId, photoId) => {
+    const photo = (restaurantPhotos[restaurantId] || []).find((p) => p.id === photoId);
+    if (photo) deletePhotoFromStorage(photo.src);
     setRestaurantPhotos((prev) => ({ ...prev, [restaurantId]: (prev[restaurantId] || []).filter((p) => p.id !== photoId) }));
     withSave(() => sb(`restaurant_photos?id=eq.${photoId}`, { method: "DELETE", prefer: "return=minimal" }));
   };
@@ -2004,13 +2044,17 @@ export default function CestovatelskyDenik() {
     withSave(() => sb(`highlights?id=eq.${id}`, { method: "DELETE", prefer: "return=minimal" }));
   };
 
-  const addHighlightPhoto = async (highlightId, src) => {
-    const photo = { id: uid(), src };
+  const addHighlightPhoto = async (highlightId, blob) => {
+    const id = uid();
+    const src = await uploadPhotoBlob(blob, `highlights/${highlightId}/${id}.jpg`);
+    const photo = { id, src };
     setHighlightPhotos((prev) => ({ ...prev, [highlightId]: [...(prev[highlightId] || []), photo] }));
-    await withSave(() => sb("highlight_photos", { method: "POST", body: JSON.stringify([{ id: photo.id, highlight_id: highlightId, src }]) }));
+    await withSave(() => sb("highlight_photos", { method: "POST", body: JSON.stringify([{ id, highlight_id: highlightId, src }]) }));
   };
 
   const removeHighlightPhoto = (highlightId, photoId) => {
+    const photo = (highlightPhotos[highlightId] || []).find((p) => p.id === photoId);
+    if (photo) deletePhotoFromStorage(photo.src);
     setHighlightPhotos((prev) => ({ ...prev, [highlightId]: (prev[highlightId] || []).filter((p) => p.id !== photoId) }));
     withSave(() => sb(`highlight_photos?id=eq.${photoId}`, { method: "DELETE", prefer: "return=minimal" }));
   };
@@ -2040,16 +2084,20 @@ export default function CestovatelskyDenik() {
     withSave(() => sb(`favorites?id=eq.${id}`, { method: "DELETE", prefer: "return=minimal" }));
   };
 
-  const addPhotoToDay = async (tripId, dayId, src, pointId) => {
-    const photo = { id: uid(), src, pointId: pointId || null };
+  const addPhotoToDay = async (tripId, dayId, blob, pointId) => {
+    const id = uid();
+    const src = await uploadPhotoBlob(blob, `days/${dayId}/${id}.jpg`);
+    const photo = { id, src, pointId: pointId || null };
     setDayPhotos((prev) => ({ ...prev, [dayId]: [...(prev[dayId] || []), photo] }));
     await withSave(() => sb("photos", {
       method: "POST",
-      body: JSON.stringify([{ id: photo.id, day_id: dayId, point_id: photo.pointId, src: photo.src }]),
+      body: JSON.stringify([{ id, day_id: dayId, point_id: photo.pointId, src }]),
     }));
   };
 
   const removePhotoFromDay = (tripId, dayId, photoId) => {
+    const photo = (dayPhotos[dayId] || []).find((p) => p.id === photoId);
+    if (photo) deletePhotoFromStorage(photo.src);
     setDayPhotos((prev) => ({ ...prev, [dayId]: (prev[dayId] || []).filter((p) => p.id !== photoId) }));
     withSave(() => sb(`photos?id=eq.${photoId}`, { method: "DELETE", prefer: "return=minimal" }));
   };
