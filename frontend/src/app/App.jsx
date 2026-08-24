@@ -452,6 +452,56 @@ function RouteMap({ points, onAddPoint, editable, height = 220, focusItemId = nu
 function TripListScreen({ trips, onOpenTrip, onCreateTrip, dbStatus, dbError, lastSavedAt, onRefresh }) {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
+  const [diag, setDiag] = useState(null); // diagnostický výsledek testu spojení
+  const [diagRunning, setDiagRunning] = useState(false);
+
+  const runDiagnostic = async () => {
+    setDiagRunning(true);
+    setDiag(null);
+    const results = [];
+
+    // Test A: čistý fetch jen s apikey (jako ruční test v adresním řádku)
+    try {
+      const t0 = Date.now();
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/trips?select=id&apikey=${SUPABASE_ANON_KEY}`);
+      const ms = Date.now() - t0;
+      results.push(`A) jen apikey: ${res.status} za ${ms}ms`);
+    } catch (e) {
+      results.push(`A) jen apikey: CHYBA — ${e.message}`);
+    }
+
+    // Test B: fetch přesně jako appka (apikey + Authorization + Content-Type + Prefer)
+    try {
+      const t0 = Date.now();
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/trips?select=id`, {
+        headers: {
+          apikey: SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+          "Content-Type": "application/json",
+          Prefer: "return=representation",
+        },
+      });
+      const ms = Date.now() - t0;
+      results.push(`B) appka-styl hlaviček: ${res.status} za ${ms}ms`);
+    } catch (e) {
+      results.push(`B) appka-styl hlaviček: CHYBA — ${e.message}`);
+    }
+
+    // Test C: fetch jen s Authorization, bez apikey
+    try {
+      const t0 = Date.now();
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/trips?select=id`, {
+        headers: { Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
+      });
+      const ms = Date.now() - t0;
+      results.push(`C) jen Authorization: ${res.status} za ${ms}ms`);
+    } catch (e) {
+      results.push(`C) jen Authorization: CHYBA — ${e.message}`);
+    }
+
+    setDiag(results.join("\n"));
+    setDiagRunning(false);
+  };
 
   const submit = (e) => {
     e.preventDefault();
@@ -480,12 +530,29 @@ function TripListScreen({ trips, onOpenTrip, onCreateTrip, dbStatus, dbError, la
         </button>
       </div>
       {dbStatus === "error" && dbError && (
-        <p style={{
-          fontSize: 10.5, fontFamily: "monospace", background: "#fff", border: `1px solid ${PALETTE.paperDeep}`,
-          borderRadius: 8, padding: "8px 10px", margin: "0 0 16px", color: "#B4432E", wordBreak: "break-word",
-        }}>
-          {dbError}
-        </p>
+        <>
+          <p style={{
+            fontSize: 10.5, fontFamily: "monospace", background: "#fff", border: `1px solid ${PALETTE.paperDeep}`,
+            borderRadius: 8, padding: "8px 10px", margin: "0 0 10px", color: "#B4432E", wordBreak: "break-word",
+          }}>
+            {dbError}
+          </p>
+          <button
+            onClick={runDiagnostic}
+            disabled={diagRunning}
+            style={{ ...btnGhost, width: "100%", fontSize: 12.5, padding: "8px 0", marginBottom: 10 }}
+          >
+            {diagRunning ? "Testuji…" : "Spustit diagnostiku spojení"}
+          </button>
+          {diag && (
+            <pre style={{
+              fontSize: 10.5, fontFamily: "monospace", background: "#fff", border: `1px solid ${PALETTE.paperDeep}`,
+              borderRadius: 8, padding: "8px 10px", margin: "0 0 16px", color: PALETTE.ink, whiteSpace: "pre-wrap", wordBreak: "break-word",
+            }}>
+              {diag}
+            </pre>
+          )}
+        </>
       )}
 
       {trips.length === 0 && !creating && (
