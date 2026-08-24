@@ -92,6 +92,51 @@ function deletePhotoFromStorage(url) {
   }).catch(() => {});
 }
 
+// Jednorázová migrace starých fotek (base64 přímo v databázi) do Storage.
+// Klíčový trik: nejdřív se stáhne jen seznam id (BEZ sloupce src) — Postgres
+// pak nemusí "rozbalovat" ten těžký text a je to bleskové i na velké tabulce.
+// Teprve pak se fotka po fotce (jednotlivě, tedy malý dotaz) natáhne, nahraje
+// do Storage a řádek se přepíše na krátkou URL.
+async function migratePhotoTable(table, folder, parentCol, onProgress) {
+  const listRes = await fetch(`${SUPABASE_URL}/rest/v1/${table}?select=id,${parentCol}`, {
+    headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
+  });
+  if (!listRes.ok) {
+    onProgress(`${table}: nepodařilo se načíst seznam (${listRes.status})`);
+    return;
+  }
+  const rows = await listRes.json();
+  let migrated = 0, skipped = 0, failed = 0;
+  for (const row of rows) {
+    try {
+      const oneRes = await fetch(`${SUPABASE_URL}/rest/v1/${table}?id=eq.${row.id}&select=id,src`, {
+        headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
+      });
+      if (!oneRes.ok) { failed++; onProgress(`${table}: ${migrated} přesunuto, ${skipped} přeskočeno, ${failed} chyb (z ${rows.length})`); continue; }
+      const [one] = await oneRes.json();
+      if (!one || !one.src || !one.src.startsWith("data:")) {
+        skipped++;
+      } else {
+        const blob = await (await fetch(one.src)).blob();
+        const path = `${folder}/${row[parentCol]}/${row.id}.jpg`;
+        const newUrl = await uploadPhotoBlob(blob, path);
+        const patchRes = await fetch(`${SUPABASE_URL}/rest/v1/${table}?id=eq.${row.id}`, {
+          method: "PATCH",
+          headers: {
+            apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+            "Content-Type": "application/json", Prefer: "return=minimal",
+          },
+          body: JSON.stringify({ src: newUrl }),
+        });
+        if (patchRes.ok) migrated++; else failed++;
+      }
+    } catch {
+      failed++;
+    }
+    onProgress(`${table}: ${migrated} přesunuto, ${skipped} přeskočeno, ${failed} chyb (z ${rows.length})`);
+  }
+}
+
 // Klient jen pro realtime odběr změn (CRUD operace jedou přes sb() výše).
 const supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -498,6 +543,23 @@ function TripListScreen({ trips, onOpenTrip, onCreateTrip, dbStatus, dbError, la
     setDiagRunning(false);
   };
 
+  const [migrating, setMigrating] = useState(false);
+  const [migrationLog, setMigrationLog] = useState(null);
+
+  const runMigration = async () => {
+    setMigrating(true);
+    setMigrationLog("Migruji staré fotky do Storage…\n");
+    const lines = ["", "", ""];
+    const render = () => setMigrationLog(lines.filter(Boolean).join("\n"));
+
+    await migratePhotoTable("photos", "days", "day_id", (line) => { lines[0] = line; render(); });
+    await migratePhotoTable("restaurant_photos", "restaurants", "restaurant_id", (line) => { lines[1] = line; render(); });
+    await migratePhotoTable("highlight_photos", "highlights", "highlight_id", (line) => { lines[2] = line; render(); });
+
+    setMigrationLog(lines.filter(Boolean).join("\n") + "\n\nHotovo. Zkus teď znovu diagnostiku.");
+    setMigrating(false);
+  };
+
   const submit = (e) => {
     e.preventDefault();
     if (!name.trim()) return;
@@ -542,9 +604,24 @@ function TripListScreen({ trips, onOpenTrip, onCreateTrip, dbStatus, dbError, la
           {diag && (
             <pre style={{
               fontSize: 10.5, fontFamily: "monospace", background: "#fff", border: `1px solid ${PALETTE.paperDeep}`,
-              borderRadius: 8, padding: "8px 10px", margin: "0 0 16px", color: PALETTE.ink, whiteSpace: "pre-wrap", wordBreak: "break-word",
+              borderRadius: 8, padding: "8px 10px", margin: "0 0 10px", color: PALETTE.ink, whiteSpace: "pre-wrap", wordBreak: "break-word",
             }}>
               {diag}
+            </pre>
+          )}
+          <button
+            onClick={runMigration}
+            disabled={migrating}
+            style={{ ...btnAccent, width: "100%", fontSize: 12.5, padding: "8px 0", marginBottom: 10 }}
+          >
+            {migrating ? "Migruji…" : "Přesunout staré fotky do Storage"}
+          </button>
+          {migrationLog && (
+            <pre style={{
+              fontSize: 10.5, fontFamily: "monospace", background: "#fff", border: `1px solid ${PALETTE.paperDeep}`,
+              borderRadius: 8, padding: "8px 10px", margin: "0 0 16px", color: PALETTE.ink, whiteSpace: "pre-wrap", wordBreak: "break-word",
+            }}>
+              {migrationLog}
             </pre>
           )}
         </>
