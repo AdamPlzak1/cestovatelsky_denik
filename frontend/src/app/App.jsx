@@ -55,6 +55,10 @@ async function sb(path, options = {}) {
 
 const STORAGE_BUCKET = "trip-photos";
 
+// DOČASNÉ: vypíná realtime kvůli diagnostice timeoutů po výpadku Supabase.
+// Až appka bude zase spolehlivě fungovat, dej zpátky na false a znovu nahraj.
+const REALTIME_DIAGNOSTIC_DISABLED = true;
+
 // Nahraje fotku (Blob) do Supabase Storage a vrátí veřejnou URL. V databázi
 // se pak ukládá jen tahle krátká URL, ne obsah fotky — šetří to přenos dat
 // (Egress) při každém načtení i realtime aktualizaci.
@@ -1725,6 +1729,7 @@ export default function CestovatelskyDenik() {
   // svůj lokální strom. Šetří to Disk IO limit Supabase (žádné opakované
   // dotazy po každé jednotlivé úpravě).
   useEffect(() => {
+    if (REALTIME_DIAGNOSTIC_DISABLED) return; // DOČASNĚ vypnuto kvůli diagnostice timeoutů
     const mapPoint = (row) => ({
       id: row.id, lat: row.lat, lng: row.lng, label: row.label || "",
       kind: row.kind || "stop", note: row.note || "", transport: row.transport || null,
