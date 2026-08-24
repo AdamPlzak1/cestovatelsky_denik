@@ -457,49 +457,44 @@ function TripListScreen({ trips, onOpenTrip, onCreateTrip, dbStatus, dbError, la
 
   const runDiagnostic = async () => {
     setDiagRunning(true);
-    setDiag(null);
+    setDiag("Testuji jednotlivé tabulky…\n");
     const results = [];
+    const tables = [
+      ["trips", "trips?select=*&order=created_at.asc"],
+      ["days", "days?select=*&order=created_at.asc"],
+      ["points", "points?select=*&order=position.asc"],
+      ["photos", "photos?select=*&order=created_at.asc"],
+      ["restaurants", "restaurants?select=*&order=position.asc"],
+      ["restaurant_photos", "restaurant_photos?select=*&order=created_at.asc"],
+      ["highlights", "highlights?select=*&order=position.asc"],
+      ["highlight_photos", "highlight_photos?select=*&order=created_at.asc"],
+      ["favorites", "favorites?select=*&order=position.asc"],
+    ];
 
-    // Test A: čistý fetch jen s apikey (jako ruční test v adresním řádku)
-    try {
-      const t0 = Date.now();
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/trips?select=id&apikey=${SUPABASE_ANON_KEY}`);
-      const ms = Date.now() - t0;
-      results.push(`A) jen apikey: ${res.status} za ${ms}ms`);
-    } catch (e) {
-      results.push(`A) jen apikey: CHYBA — ${e.message}`);
+    for (const [name, path] of tables) {
+      try {
+        const t0 = Date.now();
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+          headers: {
+            apikey: SUPABASE_ANON_KEY,
+            Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+            "Content-Type": "application/json",
+            Prefer: "return=representation",
+          },
+        });
+        const ms = Date.now() - t0;
+        if (res.ok) {
+          results.push(`✅ ${name}: ${res.status} za ${ms}ms`);
+        } else {
+          const text = await res.text().catch(() => "");
+          results.push(`❌ ${name}: ${res.status} za ${ms}ms — ${text.slice(0, 150)}`);
+        }
+      } catch (e) {
+        results.push(`❌ ${name}: CHYBA — ${e.message}`);
+      }
+      setDiag(results.join("\n"));
     }
 
-    // Test B: fetch přesně jako appka (apikey + Authorization + Content-Type + Prefer)
-    try {
-      const t0 = Date.now();
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/trips?select=id`, {
-        headers: {
-          apikey: SUPABASE_ANON_KEY,
-          Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-          "Content-Type": "application/json",
-          Prefer: "return=representation",
-        },
-      });
-      const ms = Date.now() - t0;
-      results.push(`B) appka-styl hlaviček: ${res.status} za ${ms}ms`);
-    } catch (e) {
-      results.push(`B) appka-styl hlaviček: CHYBA — ${e.message}`);
-    }
-
-    // Test C: fetch jen s Authorization, bez apikey
-    try {
-      const t0 = Date.now();
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/trips?select=id`, {
-        headers: { Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
-      });
-      const ms = Date.now() - t0;
-      results.push(`C) jen Authorization: ${res.status} za ${ms}ms`);
-    } catch (e) {
-      results.push(`C) jen Authorization: CHYBA — ${e.message}`);
-    }
-
-    setDiag(results.join("\n"));
     setDiagRunning(false);
   };
 
