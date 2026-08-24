@@ -1658,17 +1658,17 @@ export default function CestovatelskyDenik() {
   // Použije se při startu i pro ruční obnovení (více lidí může upravovat souběžně).
   const loadAllData = useCallback(async () => {
     try {
-      const [tripsRows, daysRows, pointsRows, photosRows, restaurantsRows, restaurantPhotosRows, highlightsRows, highlightPhotosRows, favoritesRows] = await Promise.all([
-        sb("trips?select=*&order=created_at.asc"),
-        sb("days?select=*&order=created_at.asc"),
-        sb("points?select=*&order=position.asc"),
-        sb("photos?select=*&order=created_at.asc"),
-        sb("restaurants?select=*&order=position.asc"),
-        sb("restaurant_photos?select=*&order=created_at.asc"),
-        sb("highlights?select=*&order=position.asc"),
-        sb("highlight_photos?select=*&order=created_at.asc"),
-        sb("favorites?select=*&order=position.asc"),
-      ]);
+      // DIAGNOSTIKA: dotazy jdou jeden po druhém (ne najednou), ať zjistíme,
+      // jestli appce dělal potíže souběh víc paralelních dotazů.
+      const tripsRows = await sb("trips?select=*&order=created_at.asc");
+      const daysRows = await sb("days?select=*&order=created_at.asc");
+      const pointsRows = await sb("points?select=*&order=position.asc");
+      const photosRows = await sb("photos?select=*&order=created_at.asc");
+      const restaurantsRows = await sb("restaurants?select=*&order=position.asc");
+      const restaurantPhotosRows = await sb("restaurant_photos?select=*&order=created_at.asc");
+      const highlightsRows = await sb("highlights?select=*&order=position.asc");
+      const highlightPhotosRows = await sb("highlight_photos?select=*&order=created_at.asc");
+      const favoritesRows = await sb("favorites?select=*&order=position.asc");
       const assembled = tripsRows.map((t) => ({
         id: t.id,
         name: t.name,
