@@ -57,7 +57,7 @@ const STORAGE_BUCKET = "trip-photos";
 
 // DOČASNÉ: vypíná realtime kvůli diagnostice timeoutů po výpadku Supabase.
 // Až appka bude zase spolehlivě fungovat, dej zpátky na false a znovu nahraj.
-const REALTIME_DIAGNOSTIC_DISABLED = true;
+const REALTIME_DIAGNOSTIC_DISABLED = false;
 
 // Nahraje fotku (Blob) do Supabase Storage a vrátí veřejnou URL. V databázi
 // se pak ukládá jen tahle krátká URL, ne obsah fotky — šetří to přenos dat
@@ -175,7 +175,7 @@ function formatRangeCz(startISO, endISO) {
 
 // Zmenší a zkomprimuje fotku na rozumnou velikost a vrátí ji jako Blob
 // (nahraje se do Supabase Storage — v databázi zůstává jen krátký odkaz).
-function compressImage(file, maxDim = 1000, quality = 0.72) {
+function compressImage(file, maxDim = 1600, quality = 0.8) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
