@@ -2,9 +2,9 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import { createClient } from "@supabase/supabase-js";
 import {
   Plus, ChevronLeft, Camera, X, Play, Pause, MapPin,
-  SkipBack, SkipForward, Music, Trash2, Calendar, Search, Loader2, Route as RouteIcon,
+  SkipBack, SkipForward, Trash2, Calendar, Search, Loader2, Route as RouteIcon,
   Plane, Car, Bike, Footprints, Ship, ChevronUp, ChevronDown, Utensils, Sparkles, Star,
-  ExternalLink, Pencil, RefreshCw, Share2, Wallet
+  Pencil, RefreshCw, Share2, Wallet
 } from "lucide-react";
 
 // ---------------------------------------------------------------------
@@ -226,6 +226,17 @@ const TRANSPORT_OPTIONS = [
 ];
 
 // -------------------- Stamp badge (signature element) ------------------
+
+function SpotifyIcon({ size = 16, color = "#1DB954" }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}>
+      <circle cx="12" cy="12" r="11" fill={color} fillOpacity="0.16" stroke={color} strokeWidth="1.3" />
+      <path d="M6.3 9.6c3.6-1 8.2-0.6 11.2 1.2" stroke={color} strokeWidth="1.7" strokeLinecap="round" fill="none" />
+      <path d="M6.8 13.1c3-0.8 6.6-0.5 9.2 1" stroke={color} strokeWidth="1.5" strokeLinecap="round" fill="none" />
+      <path d="M7.3 16.4c2.3-0.6 5.1-0.4 7.1 0.8" stroke={color} strokeWidth="1.3" strokeLinecap="round" fill="none" />
+    </svg>
+  );
+}
 
 function StampBadge({ label, color = PALETTE.coral, size = 64 }) {
   return (
@@ -1193,7 +1204,7 @@ function DayDetailScreen({ day, photos, onBack, onUpdateDay, onAddItem, onRename
       {viewerPhoto && (
         <div
           onClick={() => setViewerPhoto(null)}
-          style={{ position: "fixed", inset: 0, background: "rgba(15,20,30,0.92)", zIndex: 50, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 20 }}
+          style={{ position: "fixed", inset: 0, background: "rgba(15,20,30,0.92)", zIndex: 2000, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 20 }}
         >
           <img src={viewerPhoto.src} alt="" style={{ maxWidth: "100%", maxHeight: "78vh", borderRadius: 10, objectFit: "contain" }} onClick={(e) => e.stopPropagation()} />
           <div style={{ display: "flex", gap: 16, marginTop: 18 }}>
@@ -1206,7 +1217,7 @@ function DayDetailScreen({ day, photos, onBack, onUpdateDay, onAddItem, onRename
       )}
 
       {showExpenses && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(15,20,30,0.94)", zIndex: 50, display: "flex", flexDirection: "column", padding: 20 }}>
+        <div style={{ position: "fixed", inset: 0, background: "rgba(15,20,30,0.94)", zIndex: 2000, display: "flex", flexDirection: "column", padding: 20 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
             <div style={{ color: PALETTE.cream, fontFamily: "'Fraunces', serif", fontSize: 18 }}>Útraty dne</div>
             <button onClick={() => setShowExpenses(false)} style={iconBtnDark}><X size={20} /></button>
@@ -1354,7 +1365,7 @@ function EntriesScreen({ title, emptyText, addLabel, entries, photosMap, renderR
       {viewerPhoto && (
         <div
           onClick={() => setViewerPhoto(null)}
-          style={{ position: "fixed", inset: 0, background: "rgba(15,20,30,0.92)", zIndex: 50, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 20 }}
+          style={{ position: "fixed", inset: 0, background: "rgba(15,20,30,0.92)", zIndex: 2000, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 20 }}
         >
           <img src={viewerPhoto.src} alt="" style={{ maxWidth: "100%", maxHeight: "78vh", borderRadius: 10, objectFit: "contain" }} onClick={(e) => e.stopPropagation()} />
           <div style={{ display: "flex", gap: 16, marginTop: 18 }}>
@@ -1431,7 +1442,7 @@ function FavoritesScreen({ trip, favorites, onBack, onAddFavorite, onUpdateNote,
       </button>
 
       {picking && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(15,20,30,0.94)", zIndex: 50, display: "flex", flexDirection: "column", padding: 20 }}>
+        <div style={{ position: "fixed", inset: 0, background: "rgba(15,20,30,0.94)", zIndex: 2000, display: "flex", flexDirection: "column", padding: 20 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
             <div style={{ color: PALETTE.cream, fontFamily: "'Fraunces', serif", fontSize: 18 }}>Vyber místo</div>
             <button onClick={() => setPicking(false)} style={iconBtnDark}><X size={20} /></button>
@@ -1495,7 +1506,7 @@ function ViewPhotoGrid({ photos, onOpen }) {
 function ViewLightbox({ photo, onClose }) {
   if (!photo) return null;
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(15,20,30,0.92)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(15,20,30,0.92)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <img src={photo.src} alt="" style={{ maxWidth: "100%", maxHeight: "85vh", borderRadius: 10, objectFit: "contain" }} onClick={(e) => e.stopPropagation()} />
     </div>
   );
@@ -1675,9 +1686,6 @@ function PresentationScreen({ trip, allPhotos, onExit, spotifyUrl, onSetSpotifyU
   const slides = useMemo(() => buildSlides(trip, allPhotos), [trip, allPhotos]);
   const [idx, setIdx] = useState(0);
   const [playing, setPlaying] = useState(false);
-  const [musicName, setMusicName] = useState(null);
-  const audioRef = useRef(null);
-  const musicInputRef = useRef(null);
 
   const slide = slides[idx];
   const day = slide ? trip.days.find((d) => d.id === slide.dayId) : null;
@@ -1698,25 +1706,7 @@ function PresentationScreen({ trip, allPhotos, onExit, spotifyUrl, onSetSpotifyU
     return () => clearTimeout(t);
   }, [playing, idx, slides.length, slide]);
 
-  const pickMusic = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const url = URL.createObjectURL(file);
-    if (audioRef.current) {
-      audioRef.current.src = url;
-      audioRef.current.load();
-    }
-    setMusicName(file.name);
-  };
-
-  const togglePlay = () => {
-    const next = !playing;
-    setPlaying(next);
-    if (audioRef.current?.src) {
-      if (next) audioRef.current.play().catch(() => {});
-      else audioRef.current.pause();
-    }
-  };
+  const togglePlay = () => setPlaying((p) => !p);
 
   const openSpotify = () => {
     if (spotifyUrl) {
@@ -1739,7 +1729,7 @@ function PresentationScreen({ trip, allPhotos, onExit, spotifyUrl, onSetSpotifyU
 
   if (!slide || !day) {
     return (
-      <div style={{ position: "fixed", inset: 0, background: PALETTE.ink, color: PALETTE.cream, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 14, padding: 24, textAlign: "center", zIndex: 60 }}>
+      <div style={{ position: "fixed", inset: 0, background: PALETTE.ink, color: PALETTE.cream, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 14, padding: 24, textAlign: "center", zIndex: 2000 }}>
         <p style={{ opacity: 0.7, fontSize: 14 }}>Tenhle výlet ještě nemá žádné zastávky ani fotky k promítnutí.</p>
         <button onClick={onExit} style={{ ...btnGhost, color: "#fff", borderColor: "rgba(255,255,255,0.3)" }}>Zpět</button>
       </div>
@@ -1749,22 +1739,17 @@ function PresentationScreen({ trip, allPhotos, onExit, spotifyUrl, onSetSpotifyU
   const progress = slides.length > 1 ? idx / (slides.length - 1) : 1;
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: PALETTE.ink, color: PALETTE.cream, display: "flex", flexDirection: "column", zIndex: 60 }}>
-      <audio ref={audioRef} loop />
+    <div style={{ position: "fixed", inset: 0, background: PALETTE.ink, color: PALETTE.cream, display: "flex", flexDirection: "column", zIndex: 2000 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px 8px" }}>
         <button onClick={onExit} style={iconBtnDark}><X size={20} /></button>
         <div style={{ textAlign: "center" }}>
           <div style={{ fontFamily: "'Fraunces', serif", fontSize: 14, opacity: 0.85 }}>{trip.name}</div>
           <div style={{ fontSize: 11, opacity: 0.55 }}>Den {dayIndex + 1} z {trip.days.length}</div>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={openSpotify} style={{ ...iconBtnDark, background: "rgba(29,185,84,0.18)" }} title="Otevřít Spotify playlist">
-            <ExternalLink size={16} color="#1DB954" />
-          </button>
-          <button onClick={() => musicInputRef.current?.click()} style={iconBtnDark}><Music size={18} /></button>
-        </div>
+        <button onClick={openSpotify} style={{ ...iconBtnDark, background: "rgba(29,185,84,0.18)" }} title="Otevřít Spotify playlist">
+          <SpotifyIcon size={18} />
+        </button>
       </div>
-      <input ref={musicInputRef} type="file" accept="audio/*" onChange={pickMusic} style={{ display: "none" }} />
 
       <div style={{ height: 2, background: "rgba(244,239,227,0.15)", margin: "0 16px" }}>
         <div style={{ height: "100%", width: `${progress * 100}%`, background: PALETTE.coral, transition: "width 0.3s" }} />
@@ -1818,10 +1803,10 @@ function PresentationScreen({ trip, allPhotos, onExit, spotifyUrl, onSetSpotifyU
       </div>
 
       <div style={{ padding: "10px 20px 26px" }}>
-        {musicName && <div style={{ fontSize: 11, opacity: 0.5, textAlign: "center", marginBottom: 6 }}>♪ {musicName}</div>}
         {spotifyUrl && (
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 10, fontSize: 11, opacity: 0.6 }}>
-            <span>🎧 Spotify playlist nastaven</span>
+            <SpotifyIcon size={12} />
+            <span>Spotify playlist nastaven</span>
             {!readOnly && (
               <button onClick={editSpotify} style={{ background: "none", border: "none", color: PALETTE.cream, opacity: 0.7, cursor: "pointer", padding: 2 }}>
                 <Pencil size={11} />
