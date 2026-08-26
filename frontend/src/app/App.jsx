@@ -707,6 +707,7 @@ function TripListScreen({ trips, onOpenTrip, onCreateTrip, dbStatus, dbError, la
 function TripDetailScreen({ trip, photoCounts, onBack, onAddDay, onOpenDay, onStartPresentation, onPlayDay, onOpenRestaurants, onOpenHighlights, onOpenFavorites, onDeleteTrip }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [shareFeedback, setShareFeedback] = useState("");
+  const [showAllExpenses, setShowAllExpenses] = useState(false);
 
   const handleShare = async () => {
     const shareUrl = `${window.location.origin}${window.location.pathname}?guest=1&trip=${trip.id}`;
@@ -739,12 +740,15 @@ function TripDetailScreen({ trip, photoCounts, onBack, onAddDay, onOpenDay, onSt
       </button>
 
       {tripExpensesTotal > 0 && (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: PALETTE.cream, border: `1px solid ${PALETTE.paperDeep}`, borderRadius: 14, padding: "12px 14px", margin: "10px 0" }}>
+        <button
+          onClick={() => setShowAllExpenses(true)}
+          style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", background: PALETTE.cream, border: `1px solid ${PALETTE.paperDeep}`, borderRadius: 14, padding: "12px 14px", margin: "10px 0", cursor: "pointer" }}
+        >
           <span style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: PALETTE.ink, opacity: 0.75 }}>
             <Wallet size={15} color={PALETTE.gold} /> Celková útrata
           </span>
           <span style={{ fontFamily: "'Fraunces', serif", fontWeight: 700, fontSize: 18, color: PALETTE.ink }}>{formatKc(tripExpensesTotal)}</span>
-        </div>
+        </button>
       )}
 
       <div style={{ display: "flex", gap: 8, margin: "10px 0 10px" }}>
@@ -826,6 +830,50 @@ function TripDetailScreen({ trip, photoCounts, onBack, onAddDay, onOpenDay, onSt
           </button>
         )}
       </div>
+
+      {showAllExpenses && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(15,20,30,0.94)", zIndex: 2000, display: "flex", flexDirection: "column", padding: 20 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+            <div style={{ color: PALETTE.cream, fontFamily: "'Fraunces', serif", fontSize: 18 }}>Útraty podle dní</div>
+            <button onClick={() => setShowAllExpenses(false)} style={iconBtnDark}><X size={20} /></button>
+          </div>
+          <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 16 }}>
+            {trip.days.filter((d) => (d.expenses || []).length > 0).length === 0 ? (
+              <div style={{ color: PALETTE.cream, opacity: 0.5, fontSize: 13 }}>Zatím žádné útraty.</div>
+            ) : (
+              trip.days.map((day, i) => {
+                const dayExpenses = day.expenses || [];
+                if (dayExpenses.length === 0) return null;
+                const dayTotal = dayExpenses.reduce((s, e) => s + (e.amount || 0), 0);
+                return (
+                  <button
+                    key={day.id}
+                    onClick={() => { setShowAllExpenses(false); onOpenDay(day.id); }}
+                    style={{ display: "block", width: "100%", textAlign: "left", background: "rgba(244,239,227,0.06)", border: "none", borderRadius: 12, padding: "12px 14px", cursor: "pointer" }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                      <span style={{ color: PALETTE.cream, fontFamily: "'Fraunces', serif", fontSize: 15, fontWeight: 600 }}>{day.title || `Den ${i + 1}`}</span>
+                      <span style={{ color: PALETTE.coral, fontWeight: 700, fontSize: 14.5 }}>{formatKc(dayTotal)}</span>
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      {dayExpenses.map((e) => (
+                        <div key={e.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: PALETTE.cream, opacity: 0.7 }}>
+                          <span>{e.name || "Bez názvu"}</span>
+                          <span>{formatKc(e.amount)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </button>
+                );
+              })
+            )}
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 0 4px", borderTop: "1px solid rgba(244,239,227,0.15)", marginTop: 10 }}>
+            <span style={{ color: PALETTE.cream, fontSize: 14, fontWeight: 600 }}>Celkem za výlet</span>
+            <span style={{ color: PALETTE.coral, fontSize: 20, fontWeight: 700, fontFamily: "'Fraunces', serif" }}>{formatKc(tripExpensesTotal)}</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
