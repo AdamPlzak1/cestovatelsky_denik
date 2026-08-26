@@ -4,7 +4,7 @@ import {
   Plus, ChevronLeft, Camera, X, Play, Pause, MapPin,
   SkipBack, SkipForward, Music, Trash2, Calendar, Search, Loader2, Route as RouteIcon,
   Plane, Car, Bike, Footprints, Ship, ChevronUp, ChevronDown, Utensils, Sparkles, Star,
-  ExternalLink, Pencil, RefreshCw, Share2
+  ExternalLink, Pencil, RefreshCw, Share2, Wallet
 } from "lucide-react";
 
 // ---------------------------------------------------------------------
@@ -171,6 +171,17 @@ function formatRangeCz(startISO, endISO) {
   if (!startISO) return "Bez data";
   if (!endISO || endISO === startISO) return formatDateCz(startISO);
   return `${formatDateCz(startISO)} – ${formatDateCz(endISO)}`;
+}
+
+function formatBytes(bytes) {
+  if (bytes == null) return null;
+  const mb = bytes / (1024 * 1024);
+  if (mb < 1000) return `${mb.toFixed(mb < 10 ? 1 : 0)} MB`;
+  return `${(mb / 1024).toFixed(2)} GB`;
+}
+
+function formatKc(amount) {
+  return `${Math.round(amount || 0).toLocaleString("cs-CZ")} Kč`;
 }
 
 // Zmenší a zkomprimuje fotku na rozumnou velikost a vrátí ji jako Blob
@@ -494,7 +505,7 @@ function RouteMap({ points, onAddPoint, editable, height = 220, focusItemId = nu
 
 // -------------------- Trip list screen -----------------------------------
 
-function TripListScreen({ trips, onOpenTrip, onCreateTrip, dbStatus, dbError, lastSavedAt, onRefresh }) {
+function TripListScreen({ trips, onOpenTrip, onCreateTrip, dbStatus, dbError, lastSavedAt, onRefresh, storageUsageBytes }) {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [diag, setDiag] = useState(null); // diagnostický výsledek testu spojení
@@ -581,6 +592,9 @@ function TripListScreen({ trips, onOpenTrip, onCreateTrip, dbStatus, dbError, la
           {dbStatus === "loading" && "Připojuji databázi…"}
           {dbStatus === "ok" && (lastSavedAt ? `Naposledy uloženo ${new Date(lastSavedAt).toLocaleTimeString("cs-CZ", { hour: "2-digit", minute: "2-digit" })}` : "Databáze připojena")}
           {dbStatus === "error" && "Poslední akce se nepodařila uložit — zkontroluj připojení"}
+          {dbStatus === "ok" && storageUsageBytes != null && (
+            <span style={{ opacity: 0.7 }}> · {formatBytes(storageUsageBytes)} / 1 GB úložiště</span>
+          )}
         </p>
         <button onClick={onRefresh} title="Obnovit — zobrazit změny od ostatních" style={{ background: "none", border: "none", color: PALETTE.teal, opacity: 0.7, cursor: "pointer", padding: 2, display: "flex" }}>
           <RefreshCw size={13} />
@@ -703,6 +717,8 @@ function TripDetailScreen({ trip, photoCounts, onBack, onAddDay, onOpenDay, onSt
     }
   };
 
+  const tripExpensesTotal = trip.days.reduce((sum, d) => sum + (d.expenses || []).reduce((s, e) => s + (e.amount || 0), 0), 0);
+
   return (
     <div style={{ padding: "16px 18px 90px" }}>
       <TopBar onBack={onBack} title={trip.name} />
@@ -710,6 +726,15 @@ function TripDetailScreen({ trip, photoCounts, onBack, onAddDay, onOpenDay, onSt
       <button onClick={handleShare} style={{ ...btnGhost, width: "100%", marginTop: 14, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
         <Share2 size={15} /> {shareFeedback || "Sdílet s rodinou a přáteli"}
       </button>
+
+      {tripExpensesTotal > 0 && (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: PALETTE.cream, border: `1px solid ${PALETTE.paperDeep}`, borderRadius: 14, padding: "12px 14px", margin: "10px 0" }}>
+          <span style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: PALETTE.ink, opacity: 0.75 }}>
+            <Wallet size={15} color={PALETTE.gold} /> Celková útrata
+          </span>
+          <span style={{ fontFamily: "'Fraunces', serif", fontWeight: 700, fontSize: 18, color: PALETTE.ink }}>{formatKc(tripExpensesTotal)}</span>
+        </div>
+      )}
 
       <div style={{ display: "flex", gap: 8, margin: "10px 0 10px" }}>
         <button onClick={onAddDay} style={{ ...btnPrimary, flex: 1 }}>
@@ -933,7 +958,44 @@ function ItemRow({ item, index, total, photos, pendingCount, onRenameFrom, onRen
   );
 }
 
-function DayDetailScreen({ day, photos, onBack, onUpdateDay, onAddItem, onRenameItem, onRemoveItem, onReorderItems, onAddPhoto, onRemovePhoto }) {
+function ExpenseRow({ item, onUpdate, onRemove }) {
+  const [name, setName] = useState(item.name || "");
+  const [amount, setAmount] = useState(item.amount != null && item.amount !== 0 ? String(item.amount) : "");
+
+  useEffect(() => { const t = setTimeout(() => { if (name !== (item.name || "")) onUpdate(item.id, { name }); }, 500); return () => clearTimeout(t); }, [name]); // eslint-disable-line
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const num = parseFloat(amount.replace(",", ".")) || 0;
+      if (num !== (item.amount || 0)) onUpdate(item.id, { amount: num });
+    }, 500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line
+  }, [amount]);
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, background: "#fff", border: `1px solid ${PALETTE.paperDeep}`, borderRadius: 10, padding: "8px 10px" }}>
+      <input
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        placeholder="Název platby"
+        style={{ flex: 1, border: "none", background: "transparent", fontSize: 14, color: PALETTE.ink, fontFamily: "inherit", padding: 0 }}
+      />
+      <input
+        value={amount}
+        onChange={(e) => setAmount(e.target.value)}
+        placeholder="0"
+        inputMode="decimal"
+        style={{ width: 70, border: "none", background: "transparent", fontSize: 14, color: PALETTE.ink, fontFamily: "inherit", textAlign: "right", padding: 0 }}
+      />
+      <span style={{ fontSize: 12.5, color: PALETTE.ink, opacity: 0.5, flexShrink: 0 }}>Kč</span>
+      <button onClick={() => onRemove(item.id)} style={{ background: "none", border: "none", color: PALETTE.ink, opacity: 0.4, cursor: "pointer", padding: 2, flexShrink: 0 }}>
+        <X size={14} />
+      </button>
+    </div>
+  );
+}
+
+function DayDetailScreen({ day, photos, onBack, onUpdateDay, onAddItem, onRenameItem, onRemoveItem, onReorderItems, onAddPhoto, onRemovePhoto, onAddExpense, onUpdateExpense, onRemoveExpense }) {
   const fileInputRef = useRef(null);
   const uploadTargetRef = useRef(null);
   const [title, setTitle] = useState(day.title || "");
@@ -942,6 +1004,7 @@ function DayDetailScreen({ day, photos, onBack, onUpdateDay, onAddItem, onRename
   const [viewerPhoto, setViewerPhoto] = useState(null);
   const [mode, setMode] = useState("stop"); // "stop" | "route"
   const [routeDraft, setRouteDraft] = useState(null); // { lat, lng, label } — první vybraný bod cesty
+  const [showExpenses, setShowExpenses] = useState(false);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -1011,6 +1074,8 @@ function DayDetailScreen({ day, photos, onBack, onUpdateDay, onAddItem, onRename
   };
 
   const points = day.points || [];
+  const expenses = day.expenses || [];
+  const expensesTotal = expenses.reduce((sum, e) => sum + (e.amount || 0), 0);
   const unassigned = photos.filter((p) => !p.pointId);
   const unassignedPending = pendingUploads.filter((p) => !p.pointId).length;
 
@@ -1061,6 +1126,17 @@ function DayDetailScreen({ day, photos, onBack, onUpdateDay, onAddItem, onRename
           }}
         >
           <RouteIcon size={14} style={{ verticalAlign: -2, marginRight: 5 }} /> Cesta
+        </button>
+        <button
+          onClick={() => setShowExpenses(true)}
+          style={{
+            flex: 1, padding: "7px 4px", borderRadius: 10, fontSize: 12, fontWeight: 600, cursor: "pointer",
+            border: `1.5px solid ${PALETTE.gold}`, background: "transparent", color: PALETTE.ink,
+            display: "flex", flexDirection: "column", alignItems: "center", gap: 1,
+          }}
+        >
+          <span><Wallet size={13} style={{ verticalAlign: -2, marginRight: 4 }} /> Útrata</span>
+          <span style={{ fontSize: 11, opacity: 0.65 }}>{expensesTotal > 0 ? formatKc(expensesTotal) : "—"}</span>
         </button>
       </div>
 
@@ -1126,6 +1202,34 @@ function DayDetailScreen({ day, photos, onBack, onUpdateDay, onAddItem, onRename
             </button>
             <button onClick={() => setViewerPhoto(null)} style={{ ...btnGhost, color: "#fff", borderColor: "rgba(255,255,255,0.3)" }}>Zavřít</button>
           </div>
+        </div>
+      )}
+
+      {showExpenses && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(15,20,30,0.94)", zIndex: 50, display: "flex", flexDirection: "column", padding: 20 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+            <div style={{ color: PALETTE.cream, fontFamily: "'Fraunces', serif", fontSize: 18 }}>Útraty dne</div>
+            <button onClick={() => setShowExpenses(false)} style={iconBtnDark}><X size={20} /></button>
+          </div>
+          <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8 }}>
+            {expenses.length === 0 ? (
+              <div style={{ color: PALETTE.cream, opacity: 0.5, fontSize: 13 }}>Zatím žádná útrata.</div>
+            ) : (
+              expenses.map((exp) => (
+                <ExpenseRow key={exp.id} item={exp} onUpdate={onUpdateExpense} onRemove={onRemoveExpense} />
+              ))
+            )}
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 0 10px", borderTop: "1px solid rgba(244,239,227,0.15)", marginTop: 10 }}>
+            <span style={{ color: PALETTE.cream, fontSize: 14, fontWeight: 600 }}>Celkem za den</span>
+            <span style={{ color: PALETTE.coral, fontSize: 18, fontWeight: 700, fontFamily: "'Fraunces', serif" }}>{formatKc(expensesTotal)}</span>
+          </div>
+          <button
+            onClick={() => onAddExpense({ name: "", amount: 0 })}
+            style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "12px 0", borderRadius: 14, border: "none", background: PALETTE.coral, color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer" }}
+          >
+            <Plus size={16} /> Přidat útratu
+          </button>
         </div>
       )}
     </div>
@@ -1792,6 +1896,7 @@ export default function CestovatelskyDenik() {
   const [dbStatus, setDbStatus] = useState("loading"); // loading | ok | error
   const [dbError, setDbError] = useState(null);
   const [lastSavedAt, setLastSavedAt] = useState(null);
+  const [storageUsageBytes, setStorageUsageBytes] = useState(null);
 
   // Načtení všech dat z databáze (spojíme 4 tabulky do stromu v paměti).
   // Použije se při startu i pro ruční obnovení (více lidí může upravovat souběžně).
@@ -1808,6 +1913,7 @@ export default function CestovatelskyDenik() {
       const highlightsRows = await sb("highlights?select=*&order=position.asc");
       const highlightPhotosRows = await sb("highlight_photos?select=*&order=created_at.asc");
       const favoritesRows = await sb("favorites?select=*&order=position.asc");
+      const expensesRows = await sb("expenses?select=*&order=created_at.asc");
       const assembled = tripsRows.map((t) => ({
         id: t.id,
         name: t.name,
@@ -1826,6 +1932,9 @@ export default function CestovatelskyDenik() {
                 toLat: p.to_lat ?? null, toLng: p.to_lng ?? null, toLabel: p.to_label || "",
                 position: p.position ?? 0,
               })),
+            expenses: expensesRows
+              .filter((e) => e.day_id === d.id)
+              .map((e) => ({ id: e.id, name: e.name || "", amount: Number(e.amount) || 0 })),
           }))
           .sort((a, b) => (a.date || "").localeCompare(b.date || "")),
         restaurants: restaurantsRows.filter((r) => r.trip_id === t.id).map((r) => ({ id: r.id, name: r.name || "", address: r.address || "", note: r.note || "" })),
@@ -1850,6 +1959,11 @@ export default function CestovatelskyDenik() {
       setHighlightPhotos(highlightPhotosMap);
       setDbStatus("ok");
       setDbError(null);
+      // Velikost Storage — samostatně a bez blokování, ať případná chyba
+      // nezpůsobí, že appka vypadá jako nenačtená.
+      sb("rpc/get_storage_usage", { method: "POST" })
+        .then((bytes) => setStorageUsageBytes(typeof bytes === "number" ? bytes : null))
+        .catch(() => {});
     } catch (err) {
       console.error("Načtení z databáze selhalo:", err);
       setDbStatus("error");
@@ -1919,6 +2033,22 @@ export default function CestovatelskyDenik() {
       }
     };
 
+    const onExpenses = ({ eventType, new: n, old: o }) => {
+      const dayId = eventType === "DELETE" ? o.day_id : n.day_id;
+      const expenseId = eventType === "DELETE" ? o.id : n.id;
+      setTrips((prev) => prev.map((t) => {
+        const dIdx = t.days.findIndex((d) => d.id === dayId);
+        if (dIdx === -1) return t;
+        const day = t.days[dIdx];
+        const expenses = eventType === "DELETE"
+          ? removeById(day.expenses || [], expenseId)
+          : upsertById(day.expenses || [], { id: n.id, name: n.name || "", amount: Number(n.amount) || 0 });
+        const days = [...t.days];
+        days[dIdx] = { ...day, expenses };
+        return { ...t, days };
+      }));
+    };
+
     const onPhotos = ({ eventType, new: n, old: o }) => {
       const dayId = eventType === "DELETE" ? o.day_id : n.day_id;
       setDayPhotos((prev) => {
@@ -1986,6 +2116,7 @@ export default function CestovatelskyDenik() {
       .on("postgres_changes", { event: "*", schema: "public", table: "trips" }, onTrips)
       .on("postgres_changes", { event: "*", schema: "public", table: "days" }, onDays)
       .on("postgres_changes", { event: "*", schema: "public", table: "points" }, onPoints)
+      .on("postgres_changes", { event: "*", schema: "public", table: "expenses" }, onExpenses)
       .on("postgres_changes", { event: "*", schema: "public", table: "photos" }, onPhotos)
       .on("postgres_changes", { event: "*", schema: "public", table: "restaurants" }, onRestaurants)
       .on("postgres_changes", { event: "*", schema: "public", table: "restaurant_photos" }, onRestaurantPhotos)
@@ -2041,7 +2172,7 @@ export default function CestovatelskyDenik() {
 
   const addDay = (tripId) => {
     const id = uid();
-    const day = { id, title: "", date: todayISO(), points: [] };
+    const day = { id, title: "", date: todayISO(), points: [], expenses: [] };
     setTrips((prev) => prev.map((t) => {
       if (t.id !== tripId) return t;
       const sorted = [...t.days, day].sort((a, b) => (a.date || "").localeCompare(b.date || ""));
@@ -2125,6 +2256,29 @@ export default function CestovatelskyDenik() {
     withPositions.forEach((p) => {
       withSave(() => sb(`points?id=eq.${p.id}`, { method: "PATCH", body: JSON.stringify({ position: p.position }) }));
     });
+  };
+
+  // ---- Útraty ----
+  const addExpense = (tripId, dayId, { name, amount }) => {
+    const id = uid();
+    setTrips((prev) => prev.map((t) => t.id !== tripId ? t : {
+      ...t, days: t.days.map((d) => d.id !== dayId ? d : { ...d, expenses: [...(d.expenses || []), { id, name: name || "", amount: amount || 0 }] }),
+    }));
+    withSave(() => sb("expenses", { method: "POST", body: JSON.stringify({ id, day_id: dayId, name: name || "", amount: amount || 0 }) }));
+  };
+
+  const updateExpense = (tripId, dayId, id, patch) => {
+    setTrips((prev) => prev.map((t) => t.id !== tripId ? t : {
+      ...t, days: t.days.map((d) => d.id !== dayId ? d : { ...d, expenses: (d.expenses || []).map((e) => e.id === id ? { ...e, ...patch } : e) }),
+    }));
+    withSave(() => sb(`expenses?id=eq.${id}`, { method: "PATCH", body: JSON.stringify(patch) }));
+  };
+
+  const removeExpense = (tripId, dayId, id) => {
+    setTrips((prev) => prev.map((t) => t.id !== tripId ? t : {
+      ...t, days: t.days.map((d) => d.id !== dayId ? d : { ...d, expenses: (d.expenses || []).filter((e) => e.id !== id) }),
+    }));
+    withSave(() => sb(`expenses?id=eq.${id}`, { method: "DELETE", prefer: "return=minimal" }));
   };
 
   // ---- Jídlo (restaurace) ----
@@ -2339,6 +2493,7 @@ export default function CestovatelskyDenik() {
           dbError={dbError}
           lastSavedAt={lastSavedAt}
           onRefresh={loadAllData}
+          storageUsageBytes={storageUsageBytes}
         />
       ) : view.screen === "trip" && currentTrip ? (
         <TripDetailScreen
@@ -2424,6 +2579,9 @@ export default function CestovatelskyDenik() {
           onReorderItems={(orderedPoints) => reorderItems(currentTrip.id, currentDay.id, orderedPoints)}
           onAddPhoto={(src, pointId) => addPhotoToDay(currentTrip.id, currentDay.id, src, pointId)}
           onRemovePhoto={(photoId) => removePhotoFromDay(currentTrip.id, currentDay.id, photoId)}
+          onAddExpense={(item) => addExpense(currentTrip.id, currentDay.id, item)}
+          onUpdateExpense={(id, patch) => updateExpense(currentTrip.id, currentDay.id, id, patch)}
+          onRemoveExpense={(id) => removeExpense(currentTrip.id, currentDay.id, id)}
         />
       ) : view.screen === "presentation" && currentTrip ? (
         <PresentationScreen
